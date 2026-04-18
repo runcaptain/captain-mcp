@@ -40,7 +40,7 @@ Get an API key at [runcaptain.com/studio](https://runcaptain.com/studio).
 
 ## Use from Claude Code
 
-Install the companion plugin: [`claude-code-plugin-captain`](../claude-code-plugin-captain). It bundles the `.mcp.json` pointing at this package.
+Install the companion plugin: [`runcaptain/claude-code`](https://github.com/runcaptain/claude-code). It bundles the `.mcp.json` pointing at this package.
 
 ## Use from Cursor
 
