@@ -267,7 +267,7 @@ export function registerCaptainTools(server: McpServer): void {
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       log(`Indexing text into '${params.collection}' (${params.text.length} chars)`);
-      const body: Record<string, unknown> = { text: params.text, processing_type: params.processing_type || "basic" };
+      const body: Record<string, unknown> = { content: params.text, processing_type: params.processing_type || "basic" };
       if (params.filename) body.filename = params.filename;
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/index/text`, { method: "POST", body });
       return jobStartedResponse(data.job_id, "text content");

@@ -38,7 +38,7 @@ export function registerLiveSearchTools(server: McpServer): void {
       const filename = `note-${timestamp.replace(/[:.]/g, "-")}-${slugify(params.note.slice(0, 48))}.txt`;
       const header = `type: ${type}\ndate: ${timestamp}\ntags: ${tags.join(", ")}\n---\n\n`;
       const body = {
-        text: header + params.note,
+        content: header + params.note,
         filename,
         processing_type: "basic" as const,
       };
