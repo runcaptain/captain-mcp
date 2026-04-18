@@ -1,6 +1,6 @@
 {
   "name": "@captain-sdk/captain-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP server for Captain — multimodal RAG search and live project search. Usable from Claude Code, Cursor, and any MCP-aware client.",
   "type": "module",
   "license": "MIT",

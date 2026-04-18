@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerCaptainTools } from "./tools.js";
 import { registerLiveSearchTools } from "./liveSearch.js";
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 async function main() {
   const server = new McpServer({
