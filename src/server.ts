@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerCaptainTools } from "./tools.js";
 import { registerLiveSearchTools } from "./liveSearch.js";
 
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 async function main() {
   const server = new McpServer({
@@ -18,7 +18,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  process.stderr.write(`[captain-mcp] v${VERSION} ready on stdio (18 tools registered)\n`);
+  process.stderr.write(`[captain-mcp] v${VERSION} ready on stdio (19 tools registered)\n`);
 }
 
 main().catch((err) => {

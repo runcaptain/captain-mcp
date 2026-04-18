@@ -4,14 +4,16 @@ MCP server for [Captain](https://runcaptain.com) — multimodal RAG search and p
 
 ## What it does
 
-Exposes 18 tools:
+Exposes 19 tools:
 
-**Core search & collection management (16):**
+**Core search & collection management (17):**
 - `captain_search`, `captain_list_collections`, `captain_create_collection`, `captain_delete_collection`
 - `captain_list_documents`, `captain_delete_document`, `captain_wipe_documents`
 - `captain_job_status`, `captain_cancel_job`
-- `captain_index_url`, `captain_index_youtube`, `captain_index_text`
+- `captain_index_url`, `captain_index_youtube`, `captain_index_text`, `captain_index_file`
 - `captain_index_s3`, `captain_index_gcs`, `captain_index_azure`, `captain_index_r2`
+
+`captain_index_file` uploads local paths (PDF, DOCX, XLSX, CSV, TXT, images, …) via multipart/form-data — max 20 files, 100MB each.
 
 **Live search (2):**
 - `captain_save` — save a short note (decision, gotcha, bug repro, design constraint) to a per-project collection with a timestamped, slugified filename. Auto-creates the collection on first use.

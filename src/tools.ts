@@ -1,8 +1,35 @@
 import { z } from "zod";
+import { readFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getConfig, captainFetch, textResult, jobStartedResponse, type ToolResult } from "./captainClient.js";
+import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult } from "./captainClient.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".doc": "application/msword",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".xls": "application/vnd.ms-excel",
+  ".csv": "text/csv",
+  ".tsv": "text/tab-separated-values",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".yaml": "application/yaml",
+  ".yml": "application/yaml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".tiff": "image/tiff",
+};
+
+function mimeForPath(path: string): string {
+  return MIME_BY_EXT[extname(path).toLowerCase()] || "application/octet-stream";
+}
 
 export function registerCaptainTools(server: McpServer): void {
   // ── captain_search ──────────────────────────────────────────
@@ -271,6 +298,53 @@ export function registerCaptainTools(server: McpServer): void {
       if (params.filename) body.filename = params.filename;
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/index/text`, { method: "POST", body });
       return jobStartedResponse(data.job_id, "text content");
+    }
+  );
+
+  // ── captain_index_file ──────────────────────────────────────
+  server.registerTool(
+    "captain_index_file",
+    {
+      title: "Index local file(s) into a Captain collection",
+      description:
+        "Upload and index local files directly into a Captain collection via multipart/form-data. " +
+        "Supports PDF, DOCX, DOC, XLSX, XLS, CSV, TSV, TXT, MD, JSON, YAML, and common image types. " +
+        "Max 20 files per call; max 100MB per file. Use this for local filesystem paths — " +
+        "use captain_index_url for public URLs and captain_index_s3/gcs/azure/r2 for cloud storage.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        paths: z.union([z.string(), z.array(z.string())]).describe("Absolute local path or array of paths (max 20)"),
+        processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' for AI-enhanced extraction (default); 'basic' for standard processing"),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Optional custom metadata attached to all chunks"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const pathList = Array.isArray(params.paths) ? params.paths : [params.paths];
+      if (pathList.length > 20) {
+        throw new Error(`Too many files (${pathList.length}); max 20 per call.`);
+      }
+      log(`Indexing ${pathList.length} local file(s) into '${params.collection}'`);
+
+      const form = new FormData();
+      for (const p of pathList) {
+        const buf = await readFile(p);
+        const name = basename(p);
+        const blob = new Blob([new Uint8Array(buf)], { type: mimeForPath(p) });
+        form.append("files", blob, name);
+      }
+      form.append("processing_type", params.processing_type || "advanced");
+      if (params.custom_metadata) {
+        form.append("custom_metadata", JSON.stringify(params.custom_metadata));
+      }
+
+      const data = await captainUploadFiles(
+        config,
+        `collections/${encodeURIComponent(params.collection)}/index/file`,
+        form,
+      );
+      const source = pathList.length === 1 ? pathList[0] : `${pathList.length} local files`;
+      return jobStartedResponse(data.job_id, source);
     }
   );
 

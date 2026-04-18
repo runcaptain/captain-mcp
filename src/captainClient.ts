@@ -39,6 +39,27 @@ export async function captainFetch(
   return response.json();
 }
 
+export async function captainUploadFiles(
+  config: CaptainConfig,
+  path: string,
+  form: FormData,
+): Promise<any> {
+  const url = `${CAPTAIN_API_BASE}/${path}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${config.apiKey}`,
+      "X-Organization-ID": config.organizationId,
+    },
+    body: form,
+  });
+  if (!response.ok) {
+    const error = await response.text().catch(() => response.statusText);
+    throw new Error(`Captain API error (${response.status}): ${error}`);
+  }
+  return response.json();
+}
+
 export type ToolResult = { content: Array<{ type: "text"; text: string }> };
 
 export function textResult(text: string): ToolResult {
