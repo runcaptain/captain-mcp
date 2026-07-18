@@ -1,7 +1,7 @@
 {
   "name": "@captain-sdk/captain-mcp",
-  "version": "0.1.4",
-  "description": "MCP server for Captain — multimodal RAG search and live project search. Usable from Claude Code, Cursor, and any MCP-aware client.",
+  "version": "0.2.0",
+  "description": "MCP server for Captain — multimodal RAG search, chunk management, and live project search. Usable from Claude Code, Cursor, and any MCP-aware client. Runs over stdio (local) or Streamable HTTP (hosted).",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -17,11 +17,12 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:http": "node dist/httpServer.js",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
