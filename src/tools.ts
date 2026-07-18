@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult } from "./captainClient.js";
+import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult, type CaptainConfig } from "./captainClient.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -305,45 +305,90 @@ export function registerCaptainTools(server: McpServer): void {
   server.registerTool(
     "captain_index_file",
     {
-      title: "Index local file(s) into a Captain collection",
+      title: "Upload and index file(s) into a Captain collection",
       description:
-        "Upload and index local files directly into a Captain collection via multipart/form-data. " +
-        "Supports PDF, DOCX, DOC, XLSX, XLS, CSV, TSV, TXT, MD, JSON, YAML, and common image types. " +
-        "Max 20 files per call; max 100MB per file. Use this for local filesystem paths — " +
-        "use captain_index_url for public URLs and captain_index_s3/gcs/azure/r2 for cloud storage.",
+        "Upload and index files into a Captain collection (multipart to POST /v2/collections/{c}/index/file). " +
+        "Supports PDF, DOCX, XLSX, CSV, TXT, MD, JSON, YAML, images, audio, and video. Max 20 files, 100MB each. " +
+        "Provide files one of three ways: `urls` (Captain-reachable URLs the server fetches), `files` " +
+        "(inline base64 content), or `paths` (local filesystem paths — only when the server is running locally). " +
+        "For public web pages prefer captain_index_url; for cloud storage use the provider tools.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
-        paths: z.union([z.string(), z.array(z.string())]).describe("Absolute local path or array of paths (max 20)"),
-        processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' for AI-enhanced extraction (default); 'basic' for standard processing"),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Optional custom metadata attached to all chunks"),
+        urls: z.array(z.string()).optional().describe("URLs to fetch and upload (works on hosted servers)"),
+        files: z.array(z.object({
+          name: z.string().describe("Filename incl. extension, e.g. 'report.pdf'"),
+          content_base64: z.string().describe("Base64-encoded file bytes"),
+        })).optional().describe("Inline files as base64 (works on hosted servers)"),
+        paths: z.union([z.string(), z.array(z.string())]).optional().describe("Local filesystem path(s) — only usable when the server runs locally"),
+        processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' AI-enhanced extraction (default here); 'basic' standard"),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks"),
+        skip_existing: z.boolean().optional().describe("Skip files already indexed (default true)"),
+        overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
+        transcription_language: z.string().optional().describe("AWS Transcribe language code for audio/video (e.g. 'en-US')"),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const pathList = Array.isArray(params.paths) ? params.paths : [params.paths];
-      if (pathList.length > 20) {
-        throw new Error(`Too many files (${pathList.length}); max 20 per call.`);
-      }
-      log(`Indexing ${pathList.length} local file(s) into '${params.collection}'`);
+      const allowLocal = process.env.CAPTAIN_MCP_ALLOW_LOCAL_FILES !== "false";
 
       const form = new FormData();
+      let count = 0;
+      const label: string[] = [];
+
+      const append = (part: BlobPart, name: string) => {
+        const blob = new Blob([part], { type: mimeForPath(name) });
+        form.append("files", blob, name);
+        count++;
+      };
+
+      // Inline base64 files (hosted-friendly)
+      for (const f of params.files || []) {
+        const buf = Buffer.from(f.content_base64, "base64");
+        append(new Blob([buf]), f.name);
+        label.push(f.name);
+      }
+      // URLs the server fetches (hosted-friendly)
+      for (const u of params.urls || []) {
+        const resp = await fetch(u);
+        if (!resp.ok) throw new Error(`Failed to fetch ${u}: ${resp.status}`);
+        const name = basename(new URL(u).pathname) || "download";
+        append(await resp.arrayBuffer(), name);
+        label.push(u);
+      }
+      // Local paths (stdio/local only)
+      const pathList = params.paths
+        ? (Array.isArray(params.paths) ? params.paths : [params.paths])
+        : [];
+      if (pathList.length && !allowLocal) {
+        throw new Error(
+          "Local file paths are not accessible on the hosted Captain MCP server. " +
+          "Pass `urls` or inline base64 `files` instead."
+        );
+      }
       for (const p of pathList) {
         const buf = await readFile(p);
-        const name = basename(p);
-        const blob = new Blob([new Uint8Array(buf)], { type: mimeForPath(p) });
-        form.append("files", blob, name);
-      }
-      form.append("processing_type", params.processing_type || "advanced");
-      if (params.custom_metadata) {
-        form.append("custom_metadata", JSON.stringify(params.custom_metadata));
+        append(new Blob([buf]), basename(p));
+        label.push(p);
       }
 
+      if (count === 0) {
+        throw new Error("Provide at least one of `urls`, `files` (base64), or `paths`.");
+      }
+      if (count > 20) throw new Error(`Too many files (${count}); max 20 per call.`);
+
+      form.append("processing_type", params.processing_type || "advanced");
+      if (params.custom_metadata) form.append("custom_metadata", JSON.stringify(params.custom_metadata));
+      if (params.skip_existing !== undefined) form.append("skip_existing", String(params.skip_existing));
+      if (params.overwrite_existing !== undefined) form.append("overwrite_existing", String(params.overwrite_existing));
+      if (params.transcription_language) form.append("transcription_language", params.transcription_language);
+
+      log(`Uploading ${count} file(s) into '${params.collection}'`);
       const data = await captainUploadFiles(
         config,
         `collections/${encodeURIComponent(params.collection)}/index/file`,
         form,
       );
-      const source = pathList.length === 1 ? pathList[0] : `${pathList.length} local files`;
+      const source = count === 1 ? label[0] : `${count} files`;
       return jobStartedResponse(data.job_id, source);
     }
   );
@@ -535,4 +580,294 @@ export function registerCaptainTools(server: McpServer): void {
       return jobStartedResponse(data.job_id, source);
     }
   );
+
+  // ── captain_index_dropbox ───────────────────────────────────
+  server.registerTool(
+    "captain_index_dropbox",
+    {
+      title: "Index from Dropbox",
+      description:
+        "Index files from Dropbox into a Captain collection. Indexes the whole account, a folder (recursive), or a single file. " +
+        "Requires a Dropbox access token with read access.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        dropbox_access_token: z.string().describe("Dropbox access token"),
+        directory_path: z.string().optional().describe("Dropbox folder to index recursively, e.g. '/Reports/2024' (omit for whole account)"),
+        file_path: z.string().optional().describe("Single Dropbox file path, e.g. '/Reports/2024/q1.pdf'"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        dropbox_access_token: params.dropbox_access_token,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.file_path) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/dropbox/file`;
+        body.file_path = params.file_path;
+        source = `dropbox:${params.file_path}`;
+      } else if (params.directory_path) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/dropbox/directory`;
+        body.directory_path = params.directory_path;
+        source = `dropbox:${params.directory_path}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/dropbox`;
+        source = "dropbox (whole account)";
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
+
+  // ── captain_index_supabase ──────────────────────────────────
+  server.registerTool(
+    "captain_index_supabase",
+    {
+      title: "Index from Supabase Storage",
+      description:
+        "Index files from Supabase Storage (S3-compatible) into a Captain collection. Indexes a whole bucket, a directory, or a single file. " +
+        "Requires the Supabase S3 endpoint URL and access key / secret.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        bucket_name: z.string().describe("Supabase storage bucket name"),
+        endpoint_url: z.string().describe("Supabase S3 endpoint URL"),
+        access_key_id: z.string().describe("Supabase S3 access key ID"),
+        secret_access_key: z.string().describe("Supabase S3 secret access key"),
+        region: z.string().optional().describe("Region (default: us-east-1)"),
+        directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
+        file_path: z.string().optional().describe("Single object key within the bucket"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      return indexS3Compatible(config, "supabase", params);
+    }
+  );
+
+  // ── captain_index_backblaze ─────────────────────────────────
+  server.registerTool(
+    "captain_index_backblaze",
+    {
+      title: "Index from Backblaze B2",
+      description:
+        "Index files from Backblaze B2 (S3-compatible) into a Captain collection. Indexes a whole bucket, a directory, or a single file. " +
+        "Requires the Backblaze S3 endpoint URL and application key ID / key.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        bucket_name: z.string().describe("Backblaze B2 bucket name"),
+        endpoint_url: z.string().describe("Backblaze S3 endpoint URL"),
+        access_key_id: z.string().describe("Backblaze application key ID"),
+        secret_access_key: z.string().describe("Backblaze application key"),
+        region: z.string().optional().describe("Region (default: us-east-1)"),
+        directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
+        file_path: z.string().optional().describe("Single object key within the bucket"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      return indexS3Compatible(config, "backblaze", params);
+    }
+  );
+
+  // ── captain_index_gdrive ────────────────────────────────────
+  server.registerTool(
+    "captain_index_gdrive",
+    {
+      title: "Index from Google Drive",
+      description:
+        "Index files from Google Drive into a Captain collection. Indexes a whole Drive, a folder (recursive), or a single file. " +
+        "Requires a Google service-account JSON key with domain-wide delegation and the email of the user to impersonate.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        service_account_json: z.string().describe("Google service account JSON key (stringified)"),
+        subject_email: z.string().describe("Email of the Drive user to impersonate (domain-wide delegation)"),
+        folder_id: z.string().optional().describe("Drive folder id to index recursively (omit for whole Drive)"),
+        file_id: z.string().optional().describe("Single Drive file id"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        service_account_json: params.service_account_json,
+        subject_email: params.subject_email,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.file_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gdrive/file`;
+        body.file_id = params.file_id;
+        source = `gdrive:file/${params.file_id}`;
+      } else if (params.folder_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gdrive/directory`;
+        body.folder_id = params.folder_id;
+        source = `gdrive:folder/${params.folder_id}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gdrive`;
+        source = `gdrive (${params.subject_email})`;
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
+
+  // ── captain_index_sharepoint ────────────────────────────────
+  server.registerTool(
+    "captain_index_sharepoint",
+    {
+      title: "Index from SharePoint",
+      description:
+        "Index files from a SharePoint site into a Captain collection. Indexes the site's default drive, a folder (recursive), or a single file. " +
+        "Requires Microsoft Graph app credentials (tenant_id, client_id, client_secret) with SharePoint read access.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        tenant_id: z.string().describe("Microsoft Entra tenant id"),
+        client_id: z.string().describe("Microsoft Graph app (client) id"),
+        client_secret: z.string().describe("Microsoft Graph app client secret"),
+        site_url: z.string().describe("SharePoint site URL"),
+        drive_id: z.string().optional().describe("Specific document library (drive) id (default: the site's default drive)"),
+        folder_id: z.string().optional().describe("Folder id to index recursively"),
+        item_id: z.string().optional().describe("Single item (file) id"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        tenant_id: params.tenant_id,
+        client_id: params.client_id,
+        client_secret: params.client_secret,
+        site_url: params.site_url,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.drive_id) body.drive_id = params.drive_id;
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.item_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/sharepoint/file`;
+        body.item_id = params.item_id;
+        source = `sharepoint:file/${params.item_id}`;
+      } else if (params.folder_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/sharepoint/directory`;
+        body.folder_id = params.folder_id;
+        source = `sharepoint:folder/${params.folder_id}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/sharepoint`;
+        source = `sharepoint (${params.site_url})`;
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
+
+  // ── captain_index_onedrive ──────────────────────────────────
+  server.registerTool(
+    "captain_index_onedrive",
+    {
+      title: "Index from OneDrive",
+      description:
+        "Index files from a user's OneDrive into a Captain collection. Indexes the whole OneDrive, a folder (recursive), or a single file. " +
+        "Requires Microsoft Graph app credentials (tenant_id, client_id, client_secret) and the target user's email.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        tenant_id: z.string().describe("Microsoft Entra tenant id"),
+        client_id: z.string().describe("Microsoft Graph app (client) id"),
+        client_secret: z.string().describe("Microsoft Graph app client secret"),
+        user_email: z.string().describe("Email of the OneDrive owner to index"),
+        folder_id: z.string().optional().describe("Folder id to index recursively"),
+        item_id: z.string().optional().describe("Single item (file) id"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        tenant_id: params.tenant_id,
+        client_id: params.client_id,
+        client_secret: params.client_secret,
+        user_email: params.user_email,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.item_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/onedrive/file`;
+        body.item_id = params.item_id;
+        source = `onedrive:file/${params.item_id}`;
+      } else if (params.folder_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/onedrive/directory`;
+        body.folder_id = params.folder_id;
+        source = `onedrive:folder/${params.folder_id}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/onedrive`;
+        source = `onedrive (${params.user_email})`;
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
+}
+
+// Shared handler for the S3-compatible providers (Supabase, Backblaze): identical
+// request shape (bucket_name / endpoint_url / access_key_id / secret_access_key /
+// region) with a bucket|file|directory endpoint triad.
+async function indexS3Compatible(
+  config: CaptainConfig,
+  provider: "supabase" | "backblaze",
+  params: {
+    collection: string;
+    bucket_name: string;
+    endpoint_url: string;
+    access_key_id: string;
+    secret_access_key: string;
+    region?: string;
+    directory_path?: string;
+    file_path?: string;
+    processing_type?: "advanced" | "basic";
+  },
+): Promise<ToolResult> {
+  const body: Record<string, unknown> = {
+    bucket_name: params.bucket_name,
+    endpoint_url: params.endpoint_url,
+    access_key_id: params.access_key_id,
+    secret_access_key: params.secret_access_key,
+    region: params.region || "us-east-1",
+    processing_type: params.processing_type || "advanced",
+  };
+  const base = `collections/${encodeURIComponent(params.collection)}/index/${provider}`;
+  let endpoint: string;
+  let source: string;
+  if (params.file_path) {
+    endpoint = `${base}/file`;
+    body.file_uri = params.file_path;
+    source = `${provider}://${params.bucket_name}/${params.file_path}`;
+  } else if (params.directory_path) {
+    endpoint = `${base}/directory`;
+    body.directory_path = params.directory_path;
+    source = `${provider}://${params.bucket_name}/${params.directory_path}`;
+  } else {
+    endpoint = base;
+    source = `${provider}://${params.bucket_name}`;
+  }
+  log(`Indexing ${source} into '${params.collection}'`);
+  const data = await captainFetch(config, endpoint, { method: "POST", body });
+  return jobStartedResponse(data.job_id, source);
 }
