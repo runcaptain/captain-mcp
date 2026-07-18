@@ -676,6 +676,154 @@ export function registerCaptainTools(server: McpServer): void {
       return indexS3Compatible(config, "backblaze", params);
     }
   );
+
+  // ── captain_index_gdrive ────────────────────────────────────
+  server.registerTool(
+    "captain_index_gdrive",
+    {
+      title: "Index from Google Drive",
+      description:
+        "Index files from Google Drive into a Captain collection. Indexes a whole Drive, a folder (recursive), or a single file. " +
+        "Requires a Google service-account JSON key with domain-wide delegation and the email of the user to impersonate.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        service_account_json: z.string().describe("Google service account JSON key (stringified)"),
+        subject_email: z.string().describe("Email of the Drive user to impersonate (domain-wide delegation)"),
+        folder_id: z.string().optional().describe("Drive folder id to index recursively (omit for whole Drive)"),
+        file_id: z.string().optional().describe("Single Drive file id"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        service_account_json: params.service_account_json,
+        subject_email: params.subject_email,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.file_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gdrive/file`;
+        body.file_id = params.file_id;
+        source = `gdrive:file/${params.file_id}`;
+      } else if (params.folder_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gdrive/directory`;
+        body.folder_id = params.folder_id;
+        source = `gdrive:folder/${params.folder_id}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gdrive`;
+        source = `gdrive (${params.subject_email})`;
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
+
+  // ── captain_index_sharepoint ────────────────────────────────
+  server.registerTool(
+    "captain_index_sharepoint",
+    {
+      title: "Index from SharePoint",
+      description:
+        "Index files from a SharePoint site into a Captain collection. Indexes the site's default drive, a folder (recursive), or a single file. " +
+        "Requires Microsoft Graph app credentials (tenant_id, client_id, client_secret) with SharePoint read access.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        tenant_id: z.string().describe("Microsoft Entra tenant id"),
+        client_id: z.string().describe("Microsoft Graph app (client) id"),
+        client_secret: z.string().describe("Microsoft Graph app client secret"),
+        site_url: z.string().describe("SharePoint site URL"),
+        drive_id: z.string().optional().describe("Specific document library (drive) id (default: the site's default drive)"),
+        folder_id: z.string().optional().describe("Folder id to index recursively"),
+        item_id: z.string().optional().describe("Single item (file) id"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        tenant_id: params.tenant_id,
+        client_id: params.client_id,
+        client_secret: params.client_secret,
+        site_url: params.site_url,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.drive_id) body.drive_id = params.drive_id;
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.item_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/sharepoint/file`;
+        body.item_id = params.item_id;
+        source = `sharepoint:file/${params.item_id}`;
+      } else if (params.folder_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/sharepoint/directory`;
+        body.folder_id = params.folder_id;
+        source = `sharepoint:folder/${params.folder_id}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/sharepoint`;
+        source = `sharepoint (${params.site_url})`;
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
+
+  // ── captain_index_onedrive ──────────────────────────────────
+  server.registerTool(
+    "captain_index_onedrive",
+    {
+      title: "Index from OneDrive",
+      description:
+        "Index files from a user's OneDrive into a Captain collection. Indexes the whole OneDrive, a folder (recursive), or a single file. " +
+        "Requires Microsoft Graph app credentials (tenant_id, client_id, client_secret) and the target user's email.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to index into"),
+        tenant_id: z.string().describe("Microsoft Entra tenant id"),
+        client_id: z.string().describe("Microsoft Graph app (client) id"),
+        client_secret: z.string().describe("Microsoft Graph app client secret"),
+        user_email: z.string().describe("Email of the OneDrive owner to index"),
+        folder_id: z.string().optional().describe("Folder id to index recursively"),
+        item_id: z.string().optional().describe("Single item (file) id"),
+        processing_type: z.enum(["advanced", "basic"]).optional(),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        tenant_id: params.tenant_id,
+        client_id: params.client_id,
+        client_secret: params.client_secret,
+        user_email: params.user_email,
+        processing_type: params.processing_type || "advanced",
+      };
+      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      let endpoint: string;
+      let source: string;
+      if (params.item_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/onedrive/file`;
+        body.item_id = params.item_id;
+        source = `onedrive:file/${params.item_id}`;
+      } else if (params.folder_id) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/onedrive/directory`;
+        body.folder_id = params.folder_id;
+        source = `onedrive:folder/${params.folder_id}`;
+      } else {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/onedrive`;
+        source = `onedrive (${params.user_email})`;
+      }
+      log(`Indexing ${source} into '${params.collection}'`);
+      const data = await captainFetch(config, endpoint, { method: "POST", body });
+      return jobStartedResponse(data.job_id, source);
+    }
+  );
 }
 
 // Shared handler for the S3-compatible providers (Supabase, Backblaze): identical

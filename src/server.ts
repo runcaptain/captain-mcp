@@ -6,7 +6,7 @@ import { registerChunkTools } from "./chunkTools.js";
 import { registerLiveSearchTools } from "./liveSearch.js";
 
 export const VERSION = "0.2.0";
-export const TOOL_COUNT = 32;
+export const TOOL_COUNT = 35;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
