@@ -19,6 +19,11 @@ Exposes 19 tools:
 - `captain_save` — save a short note (decision, gotcha, bug repro, design constraint) to a per-project collection with a timestamped, slugified filename. Auto-creates the collection on first use.
 - `captain_find` — semantic search over saved notes, with timestamps surfaced so stale notes are obvious.
 
+**Integration wizard (1):**
+- `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
+
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), v3 search, and chunk-level tools — 36 tools total.
+
 ## Credentials
 
 Set these env vars in your shell (every client reads them the same way):

@@ -4,9 +4,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerCaptainTools } from "./tools.js";
 import { registerChunkTools } from "./chunkTools.js";
 import { registerLiveSearchTools } from "./liveSearch.js";
+import { registerWizardTool } from "./wizard.js";
 
-export const VERSION = "0.2.0";
-export const TOOL_COUNT = 35;
+export const VERSION = "0.3.0";
+export const TOOL_COUNT = 36;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
@@ -18,6 +19,7 @@ export function buildServer(): McpServer {
   registerCaptainTools(server);
   registerChunkTools(server);
   registerLiveSearchTools(server);
+  registerWizardTool(server);
   return server;
 }
 
