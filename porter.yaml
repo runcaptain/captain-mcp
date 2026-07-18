@@ -1,0 +1,34 @@
+version: v2
+name: captain-mcp
+
+build:
+  context: ./
+  method: docker
+  dockerfile: ./Dockerfile
+
+services:
+  - name: mcp
+    type: web
+    run: node dist/httpServer.js
+    port: 8080
+    cpuCores: 0.25
+    ramMegabytes: 512
+    autoscaling:
+      enabled: true
+      minInstances: 2
+      maxInstances: 6
+      cpuThresholdPercent: 70
+    healthCheck:
+      enabled: true
+      httpPath: /health
+    domains:
+      - name: mcp.runcaptain.com
+    # Stateless Bearer-passthrough: no app-level Captain credentials. Callers
+    # supply their own key per request via the Authorization header.
+    env:
+      - name: NODE_ENV
+        value: production
+      - name: PORT
+        value: "8080"
+      - name: CAPTAIN_MCP_ALLOW_LOCAL_FILES
+        value: "false"

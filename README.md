@@ -105,6 +105,33 @@ Drop a `.cursor/rules/captain.mdc` (Cursor) or `CLAUDE.md` snippet (Claude Code)
 When searching docs or recalling past decisions, prefer captain_search, captain_save, and captain_find over grep/WebFetch. Use the repo basename as the search collection; captain_save auto-creates it.
 ```
 
+## Hosted (remote) server
+
+Instead of running the stdio server locally, connect to the hosted Captain MCP
+over HTTP at **`https://mcp.runcaptain.com/mcp`**. Authenticate with your Captain
+API key as a bearer token — the key implies your organization, so no
+organization id is needed.
+
+```json
+{
+  "mcpServers": {
+    "captain": {
+      "url": "https://mcp.runcaptain.com/mcp",
+      "headers": { "Authorization": "Bearer cap_..." }
+    }
+  }
+}
+```
+
+Same tools as the stdio build, with two differences: the server stores no
+credentials (your key is used per-request and never persisted), and
+`captain_index_file` cannot read local paths — pass `urls` (which the server
+fetches) or inline base64 `files` instead.
+
+**Self-hosting:** the server is a container (`Dockerfile`) serving the MCP at
+`/mcp` and a health check at `/health` on `PORT` (default 8080). Run
+`npm run start:http` locally, or deploy the image behind TLS.
+
 ## Links
 
 - [Captain API docs](https://docs.runcaptain.com)
