@@ -389,15 +389,28 @@ export function registerSyncTools(server: McpServer): void {
       title: "Subscribe an event webhook for a sync",
       description:
         "Mint a webhook secret and get the subscribe URL plus setup steps for wiring S3 ObjectCreated/ObjectRemoved " +
-        "events through an SNS topic to Captain, enabling near-real-time change detection (faster than scheduled reconcile).",
+        "events through an SNS topic to Captain, enabling near-real-time change detection (faster than scheduled reconcile). " +
+        "For an S3 access-key sync, `sns_topic_arn` is required: it is the ARN of the SNS topic you created for your " +
+        "bucket's ObjectCreated/ObjectRemoved notifications (e.g. 'arn:aws:sns:us-east-1:123456789012:captain-bucket-events'). " +
+        "Captain subscribes to that topic to receive the events.",
       inputSchema: {
         sync_id: z.string().describe("The sync id to enable event webhooks for"),
+        sns_topic_arn: z
+          .string()
+          .optional()
+          .describe(
+            "ARN of the SNS topic wired to your bucket's ObjectCreated/ObjectRemoved notifications, e.g. " +
+              "'arn:aws:sns:us-east-1:123456789012:captain-bucket-events'. Required to enroll real-time events for an " +
+              "S3 connector; the API returns 422 without it.",
+          ),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       log(`Subscribing event webhook for sync '${params.sync_id}'`);
-      const data = await captainFetch(config, `syncs/${enc(params.sync_id)}/webhooks`, { method: "POST" });
+      const body: Record<string, unknown> = {};
+      if (params.sns_topic_arn !== undefined) body.sns_topic_arn = params.sns_topic_arn;
+      const data = await captainFetch(config, `syncs/${enc(params.sync_id)}/webhooks`, { method: "POST", body });
       const lines = [
         `Event webhook enabled for sync '${params.sync_id}'.`,
         `Subscribe URL: ${data.subscribe_url}`,
