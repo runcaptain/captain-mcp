@@ -135,7 +135,7 @@ export function registerCaptainTools(server: McpServer): void {
       description:
         "Move a collection between environments (development, staging, production) without reindexing. " +
         "IMPORTANT: API keys are environment-scoped (cap_dev_ keys see development, cap_prod_ keys see production), " +
-        "so after a move the collection is only visible to keys for the new environment — including this MCP server's key. " +
+        "so after a move the collection is only visible to keys for the new environment, including this MCP server's key. " +
         "Attached syncs do NOT follow the collection; recreate or repoint them after a move.",
       inputSchema: {
         collection: z.string().describe("Collection name to move"),
@@ -154,7 +154,7 @@ export function registerCaptainTools(server: McpServer): void {
           `Files moved: ${data.files_moved ?? "unknown"}\n` +
           `Previous environment: ${data.previous_environment ?? "unknown"}\n\n` +
           `Note: this key only sees '${data.previous_environment ?? "its own"}' environment collections, so the collection ` +
-          `may no longer be visible here. Syncs attached to it do not follow automatically — recreate them in the new environment.`
+          `may no longer be visible here. Syncs attached to it do not follow automatically; recreate them in the new environment.`
       );
     }
   );

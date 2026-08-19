@@ -8,8 +8,8 @@ Exposes 19 tools:
 
 **Core search & collection management (17):**
 - `captain_search`, `captain_list_collections`, `captain_create_collection`, `captain_delete_collection`
-- `captain_copy_collection` — clone a collection (vectors branched, no indexing credits)
-- `captain_change_environment` — move a collection between development / staging / production. API keys are environment-scoped (`cap_dev_` keys see development, `cap_prod_` see production), so a moved collection disappears from keys of the old environment, and attached syncs do not follow automatically.
+- `captain_copy_collection`: clone a collection (vectors branched, no indexing credits)
+- `captain_change_environment`: move a collection between development, staging, and production. API keys are environment-scoped (`cap_dev_` keys see development, `cap_prod_` see production), so a moved collection disappears from keys of the old environment, and attached syncs do not follow automatically.
 - `captain_list_documents`, `captain_delete_document`, `captain_wipe_documents`
 - `captain_job_status`, `captain_cancel_job`
 - `captain_index_url`, `captain_index_youtube`, `captain_index_text`, `captain_index_file`
