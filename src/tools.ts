@@ -134,7 +134,7 @@ export function registerCaptainTools(server: McpServer): void {
       title: "Move a Captain collection between environments",
       description:
         "Move a collection between environments (development, staging, production) without reindexing. " +
-        "IMPORTANT: API keys are environment-scoped (cap_dev_ keys see development, cap_prod_ keys see production), " +
+        "IMPORTANT: API keys are environment-scoped (cap_dev_ keys see development, cap_prod_ keys see production, staging has its own keys), " +
         "so after a move the collection is only visible to keys for the new environment, including this MCP server's key. " +
         "Attached syncs do NOT follow the collection; recreate or repoint them after a move.",
       inputSchema: {
