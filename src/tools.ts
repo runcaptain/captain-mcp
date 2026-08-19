@@ -127,6 +127,71 @@ export function registerCaptainTools(server: McpServer): void {
     }
   );
 
+  // ── captain_change_environment ───────────────────────────────
+  server.registerTool(
+    "captain_change_environment",
+    {
+      title: "Move a Captain collection between environments",
+      description:
+        "Move a collection between environments (development, staging, production) without reindexing. " +
+        "IMPORTANT: API keys are environment-scoped (cap_dev_ keys see development, cap_prod_ keys see production), " +
+        "so after a move the collection is only visible to keys for the new environment — including this MCP server's key. " +
+        "Attached syncs do NOT follow the collection; recreate or repoint them after a move.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to move"),
+        new_environment: z.enum(["development", "staging", "production"]).describe("Target environment"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Moving collection '${params.collection}' to ${params.new_environment}`);
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/environment`, {
+        method: "PATCH",
+        body: { new_environment: params.new_environment },
+      });
+      return textResult(
+        `${data.message ?? `Collection '${params.collection}' moved to ${params.new_environment}.`}\n` +
+          `Files moved: ${data.files_moved ?? "unknown"}\n` +
+          `Previous environment: ${data.previous_environment ?? "unknown"}\n\n` +
+          `Note: this key only sees '${data.previous_environment ?? "its own"}' environment collections, so the collection ` +
+          `may no longer be visible here. Syncs attached to it do not follow automatically — recreate them in the new environment.`
+      );
+    }
+  );
+
+  // ── captain_copy_collection ──────────────────────────────────
+  server.registerTool(
+    "captain_copy_collection",
+    {
+      title: "Copy a Captain collection",
+      description:
+        "Copy a collection, including its documents and vectors, under a new name. " +
+        "Vectors are branched rather than re-embedded, so no indexing credits are used. " +
+        "The copy lands in the same organization and environment as the source.",
+      inputSchema: {
+        collection: z.string().describe("Source collection name"),
+        target_name: z
+          .string()
+          .describe(
+            "Name for the copy. Unique within the organization and environment; 3-63 chars, alphanumeric start/end, letters, numbers, hyphens, underscores."
+          ),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Copying collection '${params.collection}' to '${params.target_name}'`);
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/copy`, {
+        method: "POST",
+        body: { target_name: params.target_name },
+      });
+      return textResult(
+        `${data.message ?? `Copied '${params.collection}' to '${params.target_name}'.`}\n` +
+          `Documents copied: ${data.documents_copied ?? "unknown"}\n` +
+          `New collection ID: ${data.database_id ?? "unknown"}`
+      );
+    }
+  );
+
   // ── captain_list_documents ───────────────────────────────────
   server.registerTool(
     "captain_list_documents",
