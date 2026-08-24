@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult, type CaptainConfig } from "./captainClient.js";
+import { captureJobOutcome } from "./analytics.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -210,9 +211,21 @@ export function registerCaptainTools(server: McpServer): void {
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/documents${qs}`);
       const docs = data.documents || [];
       if (docs.length === 0) return textResult(`No documents in '${params.collection}'.`);
-      const lines = docs.map((d: any) => `- ${d.filename || d.file_name || "Unknown"} (${d.chunk_count ?? 0} chunks, ID: ${d.file_id || d.document_id || "N/A"})`);
+      let emptyCount = 0;
+      const lines = docs.map((d: any) => {
+        const chunks = d.chunk_count ?? 0;
+        const name = d.filename || d.file_name || "Unknown";
+        const id = d.file_id || d.document_id || "N/A";
+        // A zero-chunk document holds no indexable content and never appears in
+        // search results, so flag it rather than render it like a good document.
+        if (chunks === 0) emptyCount++;
+        const flag = chunks === 0 ? " ⚠ empty — not searchable" : "";
+        return `- ${name} (${chunks} chunks, ID: ${id})${flag}`;
+      });
       const total = data.total_count ?? docs.length;
-      return textResult(`${total} document(s) in '${params.collection}':\n${lines.join("\n")}`);
+      let header = `${total} document(s) in '${params.collection}':`;
+      if (emptyCount > 0) header += `\n⚠ ${emptyCount} document(s) have 0 chunks and return nothing in search. Re-index or remove them.`;
+      return textResult(`${header}\n${lines.join("\n")}`);
     }
   );
 
@@ -269,12 +282,38 @@ export function registerCaptainTools(server: McpServer): void {
       const progress = data.progress;
       let text = `Job: ${params.job_id}\nStatus: ${data.status}`;
       if (data.progress_message) text += `\nMessage: ${data.progress_message}`;
+      let filesFailed = 0;
+      let filesSkipped = 0;
       if (progress && typeof progress === "object") {
         if (progress.current_stage) text += `\nStage: ${progress.current_stage}`;
         if (progress.files_total != null) text += `\nFiles: ${progress.files_processed ?? 0}/${progress.files_total} processed`;
-        if (progress.files_failed) text += ` (${progress.files_failed} failed)`;
+        filesFailed = Number(progress.files_failed) || 0;
+        if (filesFailed) text += ` (${filesFailed} failed)`;
+        filesSkipped = Number(progress.files_skipped) || 0;
       }
       if (data.error) text += `\nError: ${data.error}`;
+
+      // A skipped file yields a zero-chunk document that returns nothing in
+      // search, so the caller must see it even when the job "completed". The API
+      // reports skips either as a count or only in the progress message.
+      const skippedMentioned = typeof data.progress_message === "string" && /skip/i.test(data.progress_message);
+      if (filesSkipped > 0 || skippedMentioned) {
+        const count = filesSkipped > 0 ? `${filesSkipped} file(s)` : "Some files";
+        text += `\n\n⚠ Warning: ${count} skipped — no indexable content was extracted, so they produced empty, unsearchable documents. Re-index them or remove them from the collection.`;
+      }
+
+      const status = String(data.status || "").toLowerCase();
+      if (["completed", "failed", "cancelled", "canceled", "error"].includes(status)) {
+        captureJobOutcome(config, {
+          job_id: params.job_id,
+          status: data.status,
+          files_total: progress?.files_total ?? null,
+          files_processed: progress?.files_processed ?? null,
+          files_failed: filesFailed,
+          files_skipped: filesSkipped,
+          has_skipped: filesSkipped > 0 || skippedMentioned,
+        });
+      }
       return textResult(text);
     }
   );

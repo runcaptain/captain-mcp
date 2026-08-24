@@ -43,6 +43,17 @@ export CAPTAIN_ORGANIZATION_ID=019a...
 
 Get an API key at [runcaptain.com/studio](https://runcaptain.com/studio).
 
+### Optional: usage analytics
+
+Set `POSTHOG_API_KEY` to record indexing-job outcomes to PostHog — for example how
+often a job skips files that land as empty, unsearchable documents. Analytics is a
+no-op when the key is absent. `POSTHOG_HOST` defaults to `https://us.i.posthog.com`.
+
+```bash
+export POSTHOG_API_KEY=phc_...
+export POSTHOG_HOST=https://us.i.posthog.com  # or https://eu.i.posthog.com
+```
+
 ## Install — Claude Code
 
 Add to `~/.claude/settings.json` (user scope) or `.claude/settings.json` (project scope):
