@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getConfig, captainFetch, textResult, type ToolResult } from "./captainClient.js";
+import { getConfig, captainFetch, textResult, type CaptainConfig, type ToolResult } from "./captainClient.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -77,6 +77,48 @@ function summarizeSync(s: any): string {
   return lines.join("\n");
 }
 
+// Normalize a key prefix for comparison. Treat null/undefined/empty as the same
+// "whole bucket" scope, and ignore a single trailing slash so 'docs' and
+// 'docs/' match.
+function normalizePrefix(prefix?: string | null): string {
+  return (prefix ?? "").replace(/\/+$/, "");
+}
+
+// A soft-deleted sync no longer owns its source, so it must not block a new one.
+function isLiveSync(s: any): boolean {
+  const status = String(s.status ?? "").toLowerCase();
+  return status !== "inactive" && status !== "deleted" && !s.deactivated_at;
+}
+
+// Reject a create that duplicates a live sync on the same collection, bucket, and
+// prefix. Two syncs that feed one collection from the same source silently
+// corrupt retrieval, and the create endpoint has no idempotency key, so this
+// guard stops the second sync before it is created.
+async function assertNoDuplicateSync(
+  config: CaptainConfig,
+  target: { collection: string; bucket: string; prefix?: string },
+): Promise<void> {
+  const data = await captainFetch(config, "syncs");
+  const syncs: any[] = data.connections || data.syncs || [];
+  const wantPrefix = normalizePrefix(target.prefix);
+  const dup = syncs.find(
+    (s) =>
+      isLiveSync(s) &&
+      s.bucket === target.bucket &&
+      s.collection_name === target.collection &&
+      normalizePrefix(s.prefix) === wantPrefix,
+  );
+  if (dup) {
+    const scope = wantPrefix ? `${target.bucket}/${wantPrefix}` : target.bucket;
+    throw new Error(
+      `A sync already keeps collection '${target.collection}' up to date from '${scope}' (sync id ${dup.sync_id}). ` +
+        `A second sync on the same source corrupts retrieval, so this create is rejected. ` +
+        `Reconcile the existing sync with captain_reconcile_sync, change its scope with captain_update_sync, ` +
+        `or delete it with captain_delete_sync before you create a new one.`,
+    );
+  }
+}
+
 /**
  * Sync tools: create a keep-in-sync connection between a cloud storage source
  * and a Captain collection (one create tool per storage type), plus the
@@ -143,6 +185,7 @@ export function registerSyncTools(server: McpServer): void {
         region: params.region || "us-east-1",
         ...buildCommonBody(params),
       };
+      await assertNoDuplicateSync(config, params);
       log(`Creating S3 sync for '${params.bucket}' → '${params.collection}'`);
       const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/s3`, { method: "POST", body });
       return textResult(`S3 sync created and backfill started.\n\n${summarizeSync(data)}`);
@@ -178,6 +221,7 @@ export function registerSyncTools(server: McpServer): void {
         ...buildCommonBody(params),
       };
       if (params.jurisdiction && params.jurisdiction !== "default") body.jurisdiction = params.jurisdiction;
+      await assertNoDuplicateSync(config, params);
       log(`Creating R2 sync for '${params.bucket}' → '${params.collection}'`);
       const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/r2`, { method: "POST", body });
       return textResult(`R2 sync created and backfill started.\n\n${summarizeSync(data)}`);
@@ -213,6 +257,7 @@ export function registerSyncTools(server: McpServer): void {
         region: params.region || "us-east-1",
         ...buildCommonBody(params),
       };
+      await assertNoDuplicateSync(config, params);
       log(`Creating Supabase sync for '${params.bucket}' → '${params.collection}'`);
       const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/supabase`, { method: "POST", body });
       return textResult(`Supabase sync created and backfill started.\n\n${summarizeSync(data)}`);
@@ -248,6 +293,7 @@ export function registerSyncTools(server: McpServer): void {
         region: params.region || "us-east-1",
         ...buildCommonBody(params),
       };
+      await assertNoDuplicateSync(config, params);
       log(`Creating Backblaze sync for '${params.bucket}' → '${params.collection}'`);
       const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/backblaze`, { method: "POST", body });
       return textResult(`Backblaze sync created and backfill started.\n\n${summarizeSync(data)}`);
