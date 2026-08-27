@@ -6,9 +6,10 @@ import { registerChunkTools } from "./chunkTools.js";
 import { registerLiveSearchTools } from "./liveSearch.js";
 import { registerSyncTools } from "./syncTools.js";
 import { registerWizardTool } from "./wizard.js";
+import { registerEvalTools } from "./evalTools.js";
 
-export const VERSION = "0.4.0";
-export const TOOL_COUNT = 46;
+export const VERSION = "0.5.0";
+export const TOOL_COUNT = 47;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
@@ -22,6 +23,7 @@ export function buildServer(): McpServer {
   registerLiveSearchTools(server);
   registerSyncTools(server);
   registerWizardTool(server);
+  registerEvalTools(server);
   return server;
 }
 

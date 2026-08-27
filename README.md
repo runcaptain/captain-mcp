@@ -30,7 +30,10 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, and chunk-level tools — 46 tools total.
+**Retrieval eval (1):**
+- `captain_eval` — score a collection's retrieval quality. Give a set of test cases (a query plus the strings that mark a relevant result) and it reports recall@k, MRR, precision@k, and query latency. Every run carries a `surface` tag (`mcp` or `cli`) so MCP quality can be compared against the CLI benchmark ([runcaptain/captain-mrag-bench](https://github.com/runcaptain/captain-mrag-bench)), which stays the tuning path.
+
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, and chunk-level tools — 47 tools total.
 
 ## Credentials
 
