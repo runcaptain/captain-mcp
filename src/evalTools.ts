@@ -64,19 +64,27 @@ const MAX_TOTAL_QUERIES = 8000;
  * the default (limit x 3) while respecting the API's ceiling of 200.
  */
 function defaultLadder(limit: number): NamedConfig[] {
-  const deeperPool = Math.min(200, Math.max(50, limit * 5));
-  return [
+  const ladder: NamedConfig[] = [
     { name: "baseline", config: {} },
     { name: "rerank on", config: { rerank: true } },
-    {
+  ];
+  // The server's default pool is `limit * 3`, capped at 200. Only add the
+  // deeper-pool rung when it can actually be deeper than that: from limit 67
+  // upward both land on the 200 ceiling, which would repeat the previous rung's
+  // query for every question and report a comparison of a config against itself.
+  const serverDefaultPool = Math.min(200, limit * 3);
+  const deeperPool = Math.min(200, Math.max(50, limit * 5));
+  if (deeperPool > serverDefaultPool) {
+    ladder.push({
       name: "rerank, deeper pool",
       config: { rerank: { enabled: true, candidate_limit: deeperPool } },
-    },
-    {
-      name: "rerank, drop layout noise",
-      config: { rerank: true, exclude_chunk_types: ["page_header", "page_footer", "footnote"] },
-    },
-  ];
+    });
+  }
+  ladder.push({
+    name: "rerank, drop layout noise",
+    config: { rerank: true, exclude_chunk_types: ["page_header", "page_footer", "footnote"] },
+  });
+  return ladder;
 }
 
 // ── Scoring primitives ───────────────────────────────────────────────────
@@ -98,8 +106,13 @@ function rankResults(
   gt: { chunkIds: string[]; documentIds: string[] },
   matchLevel: "document" | "chunk",
 ): { rank: number | null; matchedRanks: number[] } {
-  const wantChunks = new Set(gt.chunkIds ?? []);
-  const wantDocs = new Set(gt.documentIds ?? []);
+  // Drop blank/whitespace ids: they can never match a real result, and leaving
+  // them in would inflate `relevantCount` (the nDCG ideal) for a relevant item
+  // that does not exist.
+  const clean = (ids: string[] | undefined) =>
+    (ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
+  const wantChunks = new Set(clean(gt.chunkIds));
+  const wantDocs = new Set(clean(gt.documentIds));
   const matchedRanks: number[] = [];
   // A document can occupy several of the top-k slots; count it once at its BEST
   // rank so recall stays comparable across configs that return different chunk
@@ -342,10 +355,11 @@ async function runConfig(
         const latencyMs = Date.now() - started;
         const results = Array.isArray(data?.results) ? data.results : [];
         const { rank, matchedRanks } = rankResults(results, q.groundTruth, matchLevel);
-        const relevantCount =
-          matchLevel === "chunk"
-            ? (q.groundTruth.chunkIds?.length ?? 0)
-            : (q.groundTruth.documentIds?.length ?? 0);
+        // Count only ids that could actually match, so nDCG's ideal DCG is not
+        // inflated by a blank entry that no result can ever satisfy.
+        const relevantIds =
+          matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds;
+        const relevantCount = (relevantIds ?? []).filter((id) => id.trim().length > 0).length;
         outcomes.push({ id: q.id, rank, matchedRanks, relevantCount: Math.max(1, relevantCount), latencyMs });
       } catch (e: any) {
         // A query that fails (timeout, 5xx) is EXCLUDED, never scored as a miss:
@@ -446,8 +460,11 @@ export function registerEvalTools(server: McpServer): void {
       // otherwise the matcher has nothing to compare against and every affected
       // question scores as a miss — a confidently wrong 0.0, not an error.
       const gtField = matchLevel === "chunk" ? "chunkIds" : "documentIds";
+      // A non-empty array of blank ids is as unmatchable as an empty one —
+      // rankResults compares against real ids, so ["" ] would score every
+      // question as a miss while passing a bare length check.
       const missingGt = questions
-        .filter((q) => (q.groundTruth?.[gtField]?.length ?? 0) === 0)
+        .filter((q) => !(q.groundTruth?.[gtField] ?? []).some((id) => id.trim().length > 0))
         .map((q) => q.id);
       if (missingGt.length) {
         throw new Error(
