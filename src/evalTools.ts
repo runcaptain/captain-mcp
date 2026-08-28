@@ -90,16 +90,19 @@ function defaultLadder(limit: number): NamedConfig[] {
 // ── Scoring primitives ───────────────────────────────────────────────────
 
 /**
- * Ground-truth ids that can actually match a result: trimmed, blanks dropped.
+ * Ground-truth ids that can actually match a result: trimmed, blanks dropped,
+ * DEDUPED. Every consumer of ground truth goes through this, and it must agree
+ * with how the matcher counts, which resolves ids through a Set — a repeated id
+ * can only ever be matched once.
  *
- * Every consumer of ground truth goes through this. A blank id is unmatchable,
- * so counting it anywhere silently distorts a different number each time —
- * scoring a question as a miss, inflating nDCG's ideal DCG, or (via a raw
- * length check) classifying a single-hop run as multi-hop and pulling nDCG into
- * every configuration's composite.
+ * Counting an unmatchable or repeated id distorts a different number at each
+ * site: it scores a question as a miss, inflates nDCG's ideal DCG (a duplicated
+ * id turns a perfect rank-1 hit into nDCG 0.613), or classifies a single-hop run
+ * as multi-hop and pulls nDCG into every configuration's composite.
  */
-const usableIds = (ids: string[] | undefined): string[] =>
-  (ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
+const usableIds = (ids: string[] | undefined): string[] => [
+  ...new Set((ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+];
 
 /** Per-question outcome for one configuration. */
 type QuestionOutcome = {
