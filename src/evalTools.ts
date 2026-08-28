@@ -89,6 +89,18 @@ function defaultLadder(limit: number): NamedConfig[] {
 
 // ── Scoring primitives ───────────────────────────────────────────────────
 
+/**
+ * Ground-truth ids that can actually match a result: trimmed, blanks dropped.
+ *
+ * Every consumer of ground truth goes through this. A blank id is unmatchable,
+ * so counting it anywhere silently distorts a different number each time —
+ * scoring a question as a miss, inflating nDCG's ideal DCG, or (via a raw
+ * length check) classifying a single-hop run as multi-hop and pulling nDCG into
+ * every configuration's composite.
+ */
+const usableIds = (ids: string[] | undefined): string[] =>
+  (ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
+
 /** Per-question outcome for one configuration. */
 type QuestionOutcome = {
   id: string;
@@ -106,13 +118,8 @@ function rankResults(
   gt: { chunkIds: string[]; documentIds: string[] },
   matchLevel: "document" | "chunk",
 ): { rank: number | null; matchedRanks: number[] } {
-  // Drop blank/whitespace ids: they can never match a real result, and leaving
-  // them in would inflate `relevantCount` (the nDCG ideal) for a relevant item
-  // that does not exist.
-  const clean = (ids: string[] | undefined) =>
-    (ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0);
-  const wantChunks = new Set(clean(gt.chunkIds));
-  const wantDocs = new Set(clean(gt.documentIds));
+  const wantChunks = new Set(usableIds(gt.chunkIds));
+  const wantDocs = new Set(usableIds(gt.documentIds));
   const matchedRanks: number[] = [];
   // A document can occupy several of the top-k slots; count it once at its BEST
   // rank so recall stays comparable across configs that return different chunk
@@ -355,11 +362,9 @@ async function runConfig(
         const latencyMs = Date.now() - started;
         const results = Array.isArray(data?.results) ? data.results : [];
         const { rank, matchedRanks } = rankResults(results, q.groundTruth, matchLevel);
-        // Count only ids that could actually match, so nDCG's ideal DCG is not
-        // inflated by a blank entry that no result can ever satisfy.
-        const relevantIds =
-          matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds;
-        const relevantCount = (relevantIds ?? []).filter((id) => id.trim().length > 0).length;
+        const relevantCount = usableIds(
+          matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds,
+        ).length;
         outcomes.push({ id: q.id, rank, matchedRanks, relevantCount: Math.max(1, relevantCount), latencyMs });
       } catch (e: any) {
         // A query that fails (timeout, 5xx) is EXCLUDED, never scored as a miss:
@@ -436,7 +441,8 @@ export function registerEvalTools(server: McpServer): void {
       const questions = params.questions as EvalQuestion[];
       const multiHop = questions.some(
         (q) =>
-          (matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds)?.length > 1,
+          usableIds(matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds)
+            .length > 1,
       );
       const warnings: string[] = [];
 
@@ -460,11 +466,8 @@ export function registerEvalTools(server: McpServer): void {
       // otherwise the matcher has nothing to compare against and every affected
       // question scores as a miss — a confidently wrong 0.0, not an error.
       const gtField = matchLevel === "chunk" ? "chunkIds" : "documentIds";
-      // A non-empty array of blank ids is as unmatchable as an empty one —
-      // rankResults compares against real ids, so ["" ] would score every
-      // question as a miss while passing a bare length check.
       const missingGt = questions
-        .filter((q) => !(q.groundTruth?.[gtField] ?? []).some((id) => id.trim().length > 0))
+        .filter((q) => usableIds(q.groundTruth?.[gtField]).length === 0)
         .map((q) => q.id);
       if (missingGt.length) {
         throw new Error(
