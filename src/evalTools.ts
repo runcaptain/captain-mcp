@@ -44,20 +44,65 @@ const NamedConfigSchema = z.object({
 type NamedConfig = z.infer<typeof NamedConfigSchema>;
 
 /**
+ * Fan-out caps. One call issues questions x configs authenticated upstream
+ * queries, so an uncapped set could burn a caller's API quota and hold server
+ * capacity for a long time. These bounds sit well above the methodology's
+ * working range (300-500 questions, a 4-config ladder) while keeping the worst
+ * case bounded.
+ */
+const MAX_QUESTIONS = 2000;
+const MAX_CONFIGS = 12;
+const MAX_TOTAL_QUERIES = 8000;
+
+/**
  * The CLI's fixed ladder. Used when the caller passes no `configs`.
  * Deliberately ordered cheapest-first so early stopping saves the most work.
+ *
+ * Built from `limit` rather than frozen, because the API requires
+ * `candidate_limit >= limit`: a hardcoded pool of 50 would send an invalid
+ * query for any limit above 50. The deeper pool stays meaningfully deeper than
+ * the default (limit x 3) while respecting the API's ceiling of 200.
  */
-const DEFAULT_LADDER: NamedConfig[] = [
-  { name: "baseline", config: {} },
-  { name: "rerank on", config: { rerank: true } },
-  { name: "rerank, deeper pool", config: { rerank: { enabled: true, candidate_limit: 50 } } },
-  {
+function defaultLadder(limit: number): NamedConfig[] {
+  const ladder: NamedConfig[] = [
+    { name: "baseline", config: {} },
+    { name: "rerank on", config: { rerank: true } },
+  ];
+  // The server's default pool is `limit * 3`, capped at 200. Only add the
+  // deeper-pool rung when it can actually be deeper than that: from limit 67
+  // upward both land on the 200 ceiling, which would repeat the previous rung's
+  // query for every question and report a comparison of a config against itself.
+  const serverDefaultPool = Math.min(200, limit * 3);
+  const deeperPool = Math.min(200, Math.max(50, limit * 5));
+  if (deeperPool > serverDefaultPool) {
+    ladder.push({
+      name: "rerank, deeper pool",
+      config: { rerank: { enabled: true, candidate_limit: deeperPool } },
+    });
+  }
+  ladder.push({
     name: "rerank, drop layout noise",
     config: { rerank: true, exclude_chunk_types: ["page_header", "page_footer", "footnote"] },
-  },
-];
+  });
+  return ladder;
+}
 
 // ── Scoring primitives ───────────────────────────────────────────────────
+
+/**
+ * Ground-truth ids that can actually match a result: trimmed, blanks dropped,
+ * DEDUPED. Every consumer of ground truth goes through this, and it must agree
+ * with how the matcher counts, which resolves ids through a Set — a repeated id
+ * can only ever be matched once.
+ *
+ * Counting an unmatchable or repeated id distorts a different number at each
+ * site: it scores a question as a miss, inflates nDCG's ideal DCG (a duplicated
+ * id turns a perfect rank-1 hit into nDCG 0.613), or classifies a single-hop run
+ * as multi-hop and pulls nDCG into every configuration's composite.
+ */
+const usableIds = (ids: string[] | undefined): string[] => [
+  ...new Set((ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
+];
 
 /** Per-question outcome for one configuration. */
 type QuestionOutcome = {
@@ -76,8 +121,8 @@ function rankResults(
   gt: { chunkIds: string[]; documentIds: string[] },
   matchLevel: "document" | "chunk",
 ): { rank: number | null; matchedRanks: number[] } {
-  const wantChunks = new Set(gt.chunkIds ?? []);
-  const wantDocs = new Set(gt.documentIds ?? []);
+  const wantChunks = new Set(usableIds(gt.chunkIds));
+  const wantDocs = new Set(usableIds(gt.documentIds));
   const matchedRanks: number[] = [];
   // A document can occupy several of the top-k slots; count it once at its BEST
   // rank so recall stays comparable across configs that return different chunk
@@ -320,10 +365,9 @@ async function runConfig(
         const latencyMs = Date.now() - started;
         const results = Array.isArray(data?.results) ? data.results : [];
         const { rank, matchedRanks } = rankResults(results, q.groundTruth, matchLevel);
-        const relevantCount =
-          matchLevel === "chunk"
-            ? (q.groundTruth.chunkIds?.length ?? 0)
-            : (q.groundTruth.documentIds?.length ?? 0);
+        const relevantCount = usableIds(
+          matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds,
+        ).length;
         outcomes.push({ id: q.id, rank, matchedRanks, relevantCount: Math.max(1, relevantCount), latencyMs });
       } catch (e: any) {
         // A query that fails (timeout, 5xx) is EXCLUDED, never scored as a miss:
@@ -373,10 +417,10 @@ export function registerEvalTools(server: McpServer): void {
         "and report on the other.",
       inputSchema: {
         collection: z.string().describe("Collection to evaluate."),
-        questions: z.array(QuestionSchema).min(1)
-          .describe("The question set, one entry per sampled chunk, with ground truth."),
-        configs: z.array(NamedConfigSchema).min(1).optional()
-          .describe("Candidate configurations to compare. Defaults to the standard ladder: baseline, rerank on, rerank with candidate_limit 50, and rerank plus exclude_chunk_types [page_header, page_footer, footnote]."),
+        questions: z.array(QuestionSchema).min(1).max(MAX_QUESTIONS)
+          .describe(`The question set, one entry per sampled chunk, with ground truth. Ids must be unique (they pair configurations). Max ${MAX_QUESTIONS}.`),
+        configs: z.array(NamedConfigSchema).min(1).max(MAX_CONFIGS).optional()
+          .describe(`Candidate configurations to compare. Defaults to the standard ladder: baseline, rerank on, rerank with a deeper candidate pool (scaled to \`limit\`, since the API requires pool >= limit), and rerank plus exclude_chunk_types [page_header, page_footer, footnote]. Max ${MAX_CONFIGS}.`),
         match_level: z.enum(["document", "chunk"]).optional()
           .describe("Match ground truth at document level (default — a document occupying several slots counts once at its best rank) or chunk level (stricter)."),
         limit: z.number().int().min(1).max(100).optional()
@@ -396,13 +440,56 @@ export function registerEvalTools(server: McpServer): void {
       const concurrency = params.concurrency ?? 4;
       const earlyStop = params.early_stop_score ?? 97;
       const compareAtK = params.compare_at_k ?? 3;
-      const ladder = params.configs ?? DEFAULT_LADDER;
+      const ladder = params.configs ?? defaultLadder(limit);
       const questions = params.questions as EvalQuestion[];
       const multiHop = questions.some(
         (q) =>
-          (matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds)?.length > 1,
+          usableIds(matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds)
+            .length > 1,
       );
       const warnings: string[] = [];
+
+      // Question ids are the key that pairs configurations together, so they
+      // must be unique: a duplicate id collapses to one entry in the per-round
+      // outcome map while still appearing twice in the common-id list, which
+      // double-counts it in McNemar and can flip the recommendation. Fail loudly
+      // rather than silently de-duplicating the caller's set.
+      const idCounts = new Map<string, number>();
+      for (const q of questions) idCounts.set(q.id, (idCounts.get(q.id) ?? 0) + 1);
+      const duplicates = [...idCounts.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+      if (duplicates.length) {
+        throw new Error(
+          `Question ids must be unique — they pair configurations for the comparison. Duplicated: ${duplicates
+            .slice(0, 10)
+            .join(", ")}${duplicates.length > 10 ? ` (+${duplicates.length - 10} more)` : ""}.`,
+        );
+      }
+
+      // Ground truth must contain identifiers for the level being matched,
+      // otherwise the matcher has nothing to compare against and every affected
+      // question scores as a miss — a confidently wrong 0.0, not an error.
+      const gtField = matchLevel === "chunk" ? "chunkIds" : "documentIds";
+      const missingGt = questions
+        .filter((q) => usableIds(q.groundTruth?.[gtField]).length === 0)
+        .map((q) => q.id);
+      if (missingGt.length) {
+        throw new Error(
+          `match_level '${matchLevel}' scores against groundTruth.${gtField}, but ${missingGt.length} question(s) have none: ${missingGt
+            .slice(0, 10)
+            .join(", ")}${missingGt.length > 10 ? ` (+${missingGt.length - 10} more)` : ""}. ` +
+            `Populate ${gtField}${matchLevel === "document" ? " (or pass match_level: 'chunk' if you only have chunk ids)" : ""} — without it every one of these would be scored as a miss.`,
+        );
+      }
+
+      // Cap the cross-product, not just each array: 2000 questions x 12 configs
+      // would be 24k upstream queries. Early stopping may cut this short, but
+      // the ceiling has to hold for the worst case.
+      const plannedQueries = questions.length * ladder.length;
+      if (plannedQueries > MAX_TOTAL_QUERIES) {
+        throw new Error(
+          `This run would issue ${plannedQueries} queries (${questions.length} questions x ${ladder.length} configurations), above the ${MAX_TOTAL_QUERIES} cap. Reduce the question set or the number of configurations — or split the run.`,
+        );
+      }
 
       if (questions.length < 100) {
         warnings.push(
@@ -428,6 +515,21 @@ export function registerEvalTools(server: McpServer): void {
 
       for (const candidate of ladder) {
         const cfg: QueryV3Config = { limit, ...candidate.config };
+        // The API rejects a rerank pool smaller than the result limit. Raise it
+        // rather than sending a request we know will 400 — a caller tuning
+        // `limit` should not have to hand-edit every candidate's pool.
+        if (
+          cfg.rerank &&
+          typeof cfg.rerank === "object" &&
+          typeof cfg.rerank.candidate_limit === "number" &&
+          cfg.rerank.candidate_limit < (cfg.limit ?? 10)
+        ) {
+          const raised = Math.min(200, cfg.limit ?? 10);
+          warnings.push(
+            `'${candidate.name}': candidate_limit ${cfg.rerank.candidate_limit} is below limit ${cfg.limit} (the API requires pool >= limit); raised to ${raised}.`,
+          );
+          cfg.rerank = { ...cfg.rerank, candidate_limit: raised };
+        }
         log(`eval '${candidate.name}' over ${questions.length} questions in '${params.collection}'`);
         const { outcomes, failed } = await runConfig(
           config, params.collection, questions, cfg, matchLevel, concurrency,
