@@ -27,10 +27,22 @@ Exposes 19 tools:
 - `captain_reconcile_sync` — run an on-demand diff-and-index now; returns counts of added/modified/removed.
 - `captain_subscribe_sync_webhook` — mint a webhook secret + subscribe URL for near-real-time S3 event updates.
 
+**Retrieval evaluation (1):**
+- `captain_eval` — run a question set against one or more v3 query configurations and score retrieval: recall@1/3/10, MRR, nDCG@10 (multi-hop), latency p50/p95, and a 0-100 composite with a letter grade and a plain-English diagnosis of the weakest component. Configurations are compared as a **paired** test on the same questions (McNemar plus the paired difference's 95% interval), so the output says whether a gain is real rather than just bigger. With no `configs` it runs the standard ladder (baseline → rerank → deeper candidate pool → drop layout noise) and recommends a winner.
+
+  Question generation stays on the client (this server has no model): map with `captain_list_documents` / `captain_list_chunks`, write one *paraphrased* question per sampled chunk (the exact prompt is in the tool description), record `groundTruth`, then call `captain_eval`. Failed queries are excluded and counted, never scored as misses; a round with failures can never trigger early stopping; and the winner is chosen on the questions that survived in *every* round.
+
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, and chunk-level tools — 46 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, and `captain_eval` — 49 tools total.
+
+**Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
+- `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.
+- `rerank` — `true`, or an object to tune `candidate_limit` (how many fused candidates are reranked, default `limit` × 3) and `model`. Fixes "found, but not near the top".
+- `boost` — up to 10 metadata rules, each of `{field, eq}`, `{field, in}`, or `{chunk_ids}`, with a `weight` and optional `reserve`. A rule both retrieves matching chunks and multiplies their score, for when the right chunk does not match the query's wording.
+- `exclude_chunk_types` — drop `page_header`, `page_footer`, `footnote` and friends so page furniture stops competing with body text.
+- `include_relations` / `include_related_chunks` / `relation_direction` / `relation_types` — hydrate graph neighbours, so an answer split across a claim and its evidence table comes back together. This is the multi-hop lever; build the edges with `captain_create_chunk_relation`.
 
 ## Credentials
 
