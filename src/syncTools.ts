@@ -254,6 +254,49 @@ export function registerSyncTools(server: McpServer): void {
     },
   );
 
+  // ── captain_create_azure_sync ───────────────────────────────
+  server.registerTool(
+    "captain_create_azure_sync",
+    {
+      title: "Create an Azure Blob Storage sync",
+      description:
+        "Create a sync that keeps a Captain collection up to date with an Azure Blob Storage container, and start the initial backfill. " +
+        "Authenticates with the storage account name and an account access key (key1 or key2) with read access to the container; " +
+        "the key is stored securely and never returned (rotate it later with captain_update_sync). " +
+        "The container is echoed back as `bucket` on the sync record. Azure defaults to a 60-minute reconcile cadence when " +
+        "sync_interval_minutes is omitted, so reconciliation backstops any missed Event Grid deliveries.",
+      inputSchema: {
+        collection: z.string().describe("Destination collection name"),
+        container: z
+          .string()
+          .describe("Azure Blob container to keep in sync (3-63 chars, lowercase letters, digits, single hyphens)"),
+        account_name: z
+          .string()
+          .describe("Storage account name: the <account> in https://<account>.blob.core.windows.net (3-24 lowercase letters and digits)"),
+        account_key: z.string().describe("Storage account access key (key1 or key2) with read access to the container"),
+        processing_type: processingType.optional(),
+        metadata_mapping: z
+          .record(z.string())
+          .optional()
+          .describe("Maps an Azure blob metadata key to a Captain metadata field name."),
+        ...commonSyncFields,
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        container: params.container,
+        account_name: params.account_name,
+        account_key: params.account_key,
+        ...buildCommonBody(params),
+      };
+      if (params.metadata_mapping) body.metadata_mapping = params.metadata_mapping;
+      log(`Creating Azure Blob sync for '${params.account_name}/${params.container}' → '${params.collection}'`);
+      const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/azure`, { method: "POST", body });
+      return textResult(`Azure Blob sync created and backfill started.\n\n${summarizeSync(data)}`);
+    },
+  );
+
   // ── captain_list_syncs ──────────────────────────────────────
   server.registerTool(
     "captain_list_syncs",

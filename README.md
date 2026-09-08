@@ -21,11 +21,15 @@ Exposes 19 tools:
 - `captain_save` — save a short note (decision, gotcha, bug repro, design constraint) to a per-project collection with a timestamped, slugified filename. Auto-creates the collection on first use.
 - `captain_find` — semantic search over saved notes, with timestamps surfaced so stale notes are obvious.
 
-**Storage syncs (10):**
-- `captain_create_s3_sync`, `captain_create_r2_sync`, `captain_create_supabase_sync`, `captain_create_backblaze_sync` — create a sync that keeps a collection continuously up to date with a cloud-storage bucket (initial backfill + scheduled/event/on-demand updates).
+**Storage syncs (11):**
+- `captain_create_s3_sync`, `captain_create_r2_sync`, `captain_create_supabase_sync`, `captain_create_backblaze_sync`, `captain_create_azure_sync` — create a sync that keeps a collection continuously up to date with a cloud-storage bucket (initial backfill + scheduled/event/on-demand updates).
 - `captain_list_syncs`, `captain_get_sync`, `captain_update_sync`, `captain_delete_sync` — manage existing syncs (scope, schedule, deletion policy, pause/resume; delete is a soft-delete that retains indexed docs).
 - `captain_reconcile_sync` — run an on-demand diff-and-index now; returns counts of added/modified/removed.
 - `captain_subscribe_sync_webhook` — mint a webhook secret + subscribe URL for near-real-time S3 event updates.
+
+**Query history (2):**
+- `captain_list_queries` — the queries your keys and agents have run, newest first, scoped to the key's environment; filter by collection, status, and time window, page by cursor, and opt in to `include` (results, request, response) to get each query's retrieved chunks and exact bodies per row.
+- `captain_get_query` — one stored query by `query_id` or by the `request_id` a query response returns: summary, exact request body, normalised results, and optionally the exact response body.
 
 **Retrieval evaluation (1):**
 - `captain_eval` — run a question set against one or more v3 query configurations and score retrieval: recall@1/3/10, MRR, nDCG@10 (multi-hop), latency p50/p95, and a 0-100 composite with a letter grade and a plain-English diagnosis of the weakest component. Configurations are compared as a **paired** test on the same questions (McNemar plus the paired difference's 95% interval), so the output says whether a gain is real rather than just bigger. With no `configs` it runs the standard ladder (baseline → rerank → deeper candidate pool → drop layout noise) and recommends a winner.
@@ -35,7 +39,7 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, and `captain_eval` — 49 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, and `captain_eval` — 52 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.
