@@ -86,7 +86,12 @@ export function registerCaptainTools(server: McpServer): void {
       const data = await captainFetch(config, "collections");
       const collections = data.collections || [];
       if (collections.length === 0) return textResult("No collections found.");
-      const lines = collections.map((c: any) => `- ${c.database_name} (${c.file_count ?? 0} files)`);
+      // Canonical keys with fallback to the retired database_*/file_count
+      // spellings, so the tool works against either API version.
+      const lines = collections.map(
+        (c: any) =>
+          `- ${c.collection_name ?? c.database_name} (${c.document_count ?? c.file_count ?? 0} files)`
+      );
       return textResult(`${collections.length} collection(s):\n${lines.join("\n")}`);
     }
   );
@@ -187,7 +192,7 @@ export function registerCaptainTools(server: McpServer): void {
       return textResult(
         `${data.message ?? `Copied '${params.collection}' to '${params.target_name}'.`}\n` +
           `Documents copied: ${data.documents_copied ?? "unknown"}\n` +
-          `New collection ID: ${data.database_id ?? "unknown"}`
+          `New collection ID: ${data.collection_id ?? data.database_id ?? "unknown"}`
       );
     }
   );
