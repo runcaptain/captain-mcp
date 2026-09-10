@@ -170,7 +170,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Copy a Captain collection",
       description:
-        "Copy a collection, including its documents and vectors, under a new name. " +
+        "Copy a collection, including its documents, vectors, chunk metadata, and graph relations, under a new name. " +
         "Vectors are branched rather than re-embedded, so no indexing credits are used. " +
         "The copy lands in the same organization and environment as the source.",
       inputSchema: {
@@ -189,11 +189,26 @@ export function registerCaptainTools(server: McpServer): void {
         method: "POST",
         body: { target_name: params.target_name },
       });
-      return textResult(
+      const relationsCopied = data.relations_copied;
+      const relationsUnresolved = data.relations_unresolved;
+      let text =
         `${data.message ?? `Copied '${params.collection}' to '${params.target_name}'.`}\n` +
-          `Documents copied: ${data.documents_copied ?? "unknown"}\n` +
-          `New collection ID: ${data.collection_id ?? data.database_id ?? "unknown"}`
-      );
+        `Documents copied: ${data.documents_copied ?? "unknown"}\n` +
+        `Chunk metadata copied: ${data.chunk_metadata_copied ?? "unknown"}\n` +
+        `Relations copied: ${relationsCopied ?? "unknown"}\n` +
+        `Relations unresolved: ${relationsUnresolved ?? "unknown"}\n` +
+        `New collection ID: ${data.collection_id ?? data.database_id ?? "unknown"}`;
+      // `relations_unresolved` counts only edges whose target document pointer
+      // could not be remapped. The copy still reproduces every edge, and search
+      // resolves each target by chunk_id. So an all-unresolved count means the
+      // source relations were built without target_document_id, not a failed copy.
+      if (typeof relationsCopied === "number" && relationsCopied > 0 && relationsUnresolved === relationsCopied) {
+        text +=
+          `\n\nNote: every relation reports as unresolved. The source relations carry no target ` +
+          `document pointer to remap, because target_document_id was not set when the edges were created. ` +
+          `The copy still reproduces each edge, and search resolves each target by chunk_id, so the graph is intact.`;
+      }
+      return textResult(text);
     }
   );
 
