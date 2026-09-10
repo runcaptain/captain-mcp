@@ -74,8 +74,13 @@ async function fetchAsMetadata(): Promise<OAuthMetadata> {
 }
 
 function bearerFrom(req: Request): string | undefined {
+  // Deliberately as strict as the SDK's requireBearerAuth parser (a single
+  // "Bearer " prefix): two parsers on one endpoint must agree on what a
+  // token is.
   const auth = req.headers.authorization;
-  return auth?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (!auth) return undefined;
+  const [scheme, token] = auth.split(" ");
+  return scheme === "Bearer" && token ? token : undefined;
 }
 
 function envFrom(req: Request): string | undefined {
@@ -161,7 +166,7 @@ async function main(): Promise<void> {
       resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL(PUBLIC_MCP_URL)),
     });
 
-    app.all(MCP_PATH, (req: Request, res: Response, next: NextFunction) => {
+    app.all(MCP_PATH, (req: Request, res: Response) => {
       const token = bearerFrom(req);
       if (token?.startsWith("cap_")) {
         // Legacy path: byte-identical passthrough, skips OAuth entirely.
@@ -174,16 +179,19 @@ async function main(): Promise<void> {
       }
       // OAuth path (including "no token": requireBearerAuth emits the 401
       // with WWW-Authenticate resource_metadata — the discovery trigger).
-      bearerAuth(req, res, (err?: unknown) => {
-        if (err) { next(err); return; }
+      // requireBearerAuth writes 401/403 responses itself and only invokes
+      // the callback on success — there is no error to forward.
+      bearerAuth(req, res, () => {
         const auth = (req as Request & {
           auth?: { token: string; extra?: Record<string, unknown> };
         }).auth;
-        const extra = auth?.extra || {};
+        // Deliberately NO organizationId in oauth mode: the org lives in the
+        // token's claims and the API's McpOAuthMiddleware derives it there —
+        // sending a header would re-create the header/claim divergence the
+        // security review removed.
         void serveMcp(req, res, {
           apiKey: auth!.token,
           mode: "oauth",
-          organizationId: typeof extra.org === "string" ? extra.org : undefined,
           environment: envFrom(req) || "development",
         });
       });
@@ -218,10 +226,11 @@ async function main(): Promise<void> {
     res.status(404).json({ error: "Not found", mcp_endpoint: MCP_PATH });
   });
 
-  // Express 5 error handler (bearerAuth errors land here via next(err)).
+  // Express 5 catch-all error handler (json body-parse failures and any
+  // middleware throw land here).
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     log(`middleware error: ${err?.message || err}`);
-    if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    if (!res.headersSent) res.status(400).json({ error: "Bad request" });
   });
 
   app.listen(PORT, () => {

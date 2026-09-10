@@ -4,6 +4,12 @@
  *
  *   node scripts/oauth-e2e.mjs https://staging.api.runcaptain.com [mcpBase]
  *
+ * When mcpBase is given (e.g. a branch-deploy of the MCP server pointed at
+ * staging), the script also proves the ENV ENFORCEMENT chain: tools work on a
+ * granted ?env=, and an un-granted ?env=production is refused with an error
+ * naming the granted environments — the only end-to-end proof the token's
+ * envs[] claim is enforced.
+ *
  * Walks: DCR register -> (human: open the printed /authorize URL, approve)
  * -> loopback callback captures code+state -> token exchange (verifies the
  * JWT against the live JWKS) -> refresh rotation -> CONCURRENT refresh (grace
@@ -156,6 +162,66 @@ async function main() {
     method: "POST", body: form({ token: "cmr_unknown" }),
   });
   check("revoke oracle-free", revUnknown.status === 200);
+
+  // ---- MCP leg: env enforcement (the headline verification) --------------
+  const MCP_BASE = (process.argv[3] || "").replace(/\/+$/, "");
+  if (MCP_BASE) {
+    console.log("\nA third consent is needed for the MCP env battery.");
+    let resolve3; const codeP3 = new Promise((r) => (resolve3 = r));
+    const srv3 = createServer((req, res) => {
+      const u = new URL(req.url, "http://127.0.0.1");
+      res.end("You can close this tab.");
+      if (u.searchParams.get("code")) resolve3(u.searchParams.get("code"));
+    });
+    await new Promise((r) => srv3.listen(0, "127.0.0.1", r));
+    const redirect3 = `http://127.0.0.1:${srv3.address().port}/cb`;
+    const v3 = b64url(randomBytes(48));
+    const ch3 = b64url(createHash("sha256").update(v3).digest());
+    console.log(`\nOpen and approve (grant development + staging, NOT production):\n\n  ${meta.authorization_endpoint}?` + new URLSearchParams({
+      response_type: "code", client_id: client.client_id, redirect_uri: redirect3,
+      code_challenge: ch3, code_challenge_method: "S256", state: "s3",
+      scope: "captain:read captain:write",
+    }) + "\n");
+    const code3 = await codeP3; srv3.close();
+    const tok3 = await (await fetch(meta.token_endpoint, {
+      method: "POST", body: form({
+        grant_type: "authorization_code", code: code3, redirect_uri: redirect3,
+        client_id: client.client_id, code_verifier: v3 }),
+    })).json();
+    check("third consent exchange", !!tok3.access_token);
+
+    const mcpCall = async (env, payload) => {
+      const r = await fetch(`${MCP_BASE}/mcp?env=${env}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+          "Authorization": `Bearer ${tok3.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const text = await r.text();
+      return { status: r.status, text };
+    };
+    const listReq = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+    const callReq = { jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "captain_list_collections", arguments: {} } };
+
+    const l1 = await mcpCall("development", listReq);
+    check("MCP tools/list on granted env", l1.status === 200 && l1.text.includes("captain_list_collections"));
+    const c1 = await mcpCall("development", callReq);
+    check("MCP tool call on development", c1.status === 200 && !c1.text.includes("not authorized"),
+          c1.text.slice(0, 120));
+    const c2 = await mcpCall("staging", callReq);
+    check("MCP tool call on staging (granted)", c2.status === 200 && !c2.text.includes("not authorized"));
+    const c3 = await mcpCall("production", callReq);
+    check("MCP tool call on UN-granted production is refused",
+          c3.text.includes("not authorized") || c3.text.includes("Re-authorize"),
+          c3.text.slice(0, 160));
+  } else {
+    console.log("\n(no mcpBase argument — MCP env-enforcement leg SKIPPED; " +
+                "run with the MCP base URL before sign-off)");
+  }
 
   // ---- negatives ----------------------------------------------------------
   const badReg = await fetch(`${API}/oauth/register`, {
