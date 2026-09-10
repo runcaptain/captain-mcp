@@ -163,7 +163,7 @@ export function registerSyncTools(server: McpServer): void {
         account_id: z.string().describe("Cloudflare account ID (from the R2 dashboard)"),
         access_key_id: z.string().describe("R2 S3 API token access key ID"),
         secret_access_key: z.string().describe("R2 S3 API token secret access key"),
-        jurisdiction: z.enum(["default", "eu", "fedramp"]).optional().describe("R2 jurisdiction (default: 'default')"),
+        jurisdiction: z.enum(["default", "eu", "fedramp", "us"]).optional().describe("R2 jurisdiction (default: 'default')"),
         processing_type: processingType.optional(),
         ...commonSyncFields,
       },
