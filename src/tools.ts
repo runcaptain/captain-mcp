@@ -615,7 +615,7 @@ export function registerCaptainTools(server: McpServer): void {
         r2_account_id: z.string().describe("Cloudflare account ID"),
         r2_access_key_id: z.string().describe("R2 access key ID"),
         r2_secret_access_key: z.string().describe("R2 secret access key"),
-        jurisdiction: z.string().optional().describe("R2 jurisdiction (default, eu, fedramp)"),
+        jurisdiction: z.string().optional().describe("R2 jurisdiction (default, eu, fedramp, us)"),
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
