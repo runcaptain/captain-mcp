@@ -14,6 +14,20 @@ export interface CaptainConfig {
   // causes a 403 ("API key does not belong to the specified organization"), so
   // it's better to omit it and let the key speak for itself.
   organizationId?: string;
+  /**
+   * "legacy" = raw cap_* key passthrough to /{v2|v3} (byte-identical to the
+   * pre-OAuth behavior, and the only mode in stdio). "oauth" = Captain-issued
+   * access token; calls route to /mcp-app/{v2|v3} where the API's
+   * McpOAuthMiddleware verifies the token, derives the org from its claims,
+   * and enforces the environment against the token's grant.
+   */
+  mode?: "legacy" | "oauth";
+  /**
+   * OAuth mode only: the ACTIVE environment for this connection, from the
+   * connection URL's ?env= (or X-Captain-Environment). Never validated here —
+   * ONE enforcement point, the API.
+   */
+  environment?: string;
 }
 
 // Request-scoped credential store. The hosted HTTP server derives credentials
@@ -42,7 +56,12 @@ export function getConfig(override?: Partial<CaptainConfig>): CaptainConfig {
 
   if (!apiKey) throw new Error("CAPTAIN_API_KEY is required.");
 
-  return { apiKey, organizationId };
+  return {
+    apiKey,
+    organizationId,
+    mode: override?.mode ?? scoped?.mode ?? "legacy",
+    environment: override?.environment ?? scoped?.environment,
+  };
 }
 
 function captainHeaders(config: CaptainConfig, extra: Record<string, string> = {}): Record<string, string> {
@@ -61,7 +80,7 @@ export async function captainFetch(
   options: { method?: string; body?: unknown; version?: ApiVersion } = {}
 ): Promise<any> {
   const version = options.version || "v2";
-  const url = `${CAPTAIN_API_HOST}/${version}/${path}`;
+  const url = buildUrl(config, version, path);
   const response = await fetch(url, {
     method: options.method || "GET",
     headers: captainHeaders(config, { "Content-Type": "application/json" }),
@@ -78,12 +97,26 @@ export async function captainFetch(
   return text ? JSON.parse(text) : {};
 }
 
+/**
+ * Build the request URL for either auth mode. OAuth mode prefixes /mcp-app
+ * and appends ?environment= — merged via URL/URLSearchParams because `path`
+ * frequently carries its own query string already.
+ */
+function buildUrl(config: CaptainConfig, version: ApiVersion, path: string): string {
+  const prefix = config.mode === "oauth" ? "/mcp-app" : "";
+  const url = new URL(`${CAPTAIN_API_HOST}${prefix}/${version}/${path}`);
+  if (config.mode === "oauth") {
+    url.searchParams.set("environment", config.environment || "development");
+  }
+  return url.toString();
+}
+
 export async function captainUploadFiles(
   config: CaptainConfig,
   path: string,
   form: FormData,
 ): Promise<any> {
-  const url = `${CAPTAIN_API_HOST}/v2/${path}`;
+  const url = buildUrl(config, "v2", path);
   const response = await fetch(url, {
     method: "POST",
     headers: captainHeaders(config),

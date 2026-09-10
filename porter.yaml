@@ -32,3 +32,15 @@ services:
         value: "8080"
       - name: CAPTAIN_MCP_ALLOW_LOCAL_FILES
         value: "false"
+      # ---- MCP OAuth (resource-server mode) ------------------------------
+      # All PUBLIC config, no secrets — the no-secrets property of this file
+      # is deliberate and load-bearing. Flip CAPTAIN_OAUTH_ENABLED to "true"
+      # to release OAuth once the API-side endpoints are live in prod.
+      - name: CAPTAIN_OAUTH_ENABLED
+        value: "false"
+      - name: CAPTAIN_OAUTH_ISSUER
+        value: "https://api.captain.dev"
+      - name: CAPTAIN_JWKS_URL
+        value: "https://api.captain.dev/.well-known/jwks.json"
+      - name: CAPTAIN_MCP_PUBLIC_URL
+        value: "https://mcp.runcaptain.com/mcp"
