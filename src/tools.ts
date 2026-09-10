@@ -31,6 +31,25 @@ function mimeForPath(path: string): string {
   return MIME_BY_EXT[extname(path).toLowerCase()] || "application/octet-stream";
 }
 
+// Format a limit/offset list response ({ total_count, offset, limit }) with a
+// shown-range header and, when more rows remain, the offset for the next page.
+// A single page never looks like the whole set, so an agent paging a collection
+// knows when the list is complete.
+function pagedListText(
+  noun: string,
+  lines: string[],
+  data: { total_count?: number; offset?: number },
+  requestedOffset: number,
+  context = "",
+): string {
+  const total = data.total_count ?? lines.length;
+  const offset = data.offset ?? requestedOffset;
+  const end = offset + lines.length;
+  let text = `Showing ${offset + 1}-${end} of ${total} ${noun}(s)${context}:\n${lines.join("\n")}`;
+  if (end < total) text += `\n\nMore ${noun}s remain; fetch the next page with offset ${end}.`;
+  return text;
+}
+
 export function registerCaptainTools(server: McpServer): void {
   // ── captain_search ──────────────────────────────────────────
   server.registerTool(
@@ -78,12 +97,21 @@ export function registerCaptainTools(server: McpServer): void {
     "captain_list_collections",
     {
       title: "List Captain collections",
-      description: "List all available Captain collections for the configured organization.",
-      inputSchema: {},
+      description:
+        "List Captain collections for the configured organization, paginated. Returns the shown range, " +
+        "the real total_count, and — when more remain — the offset for the next page.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(1000).optional().describe("Max collections to return (default 100, max 1000)"),
+        offset: z.number().int().min(0).optional().describe("Pagination offset (default 0)"),
+      },
     },
-    async (): Promise<ToolResult> => {
+    async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const data = await captainFetch(config, "collections");
+      const qs = new URLSearchParams();
+      if (params.limit !== undefined) qs.set("limit", String(params.limit));
+      if (params.offset !== undefined) qs.set("offset", String(params.offset));
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      const data = await captainFetch(config, `collections${suffix}`);
       const collections = data.collections || [];
       if (collections.length === 0) return textResult("No collections found.");
       // Canonical keys with fallback to the retired database_*/file_count
@@ -92,7 +120,7 @@ export function registerCaptainTools(server: McpServer): void {
         (c: any) =>
           `- ${c.collection_name ?? c.database_name} (${c.document_count ?? c.file_count ?? 0} files)`
       );
-      return textResult(`${collections.length} collection(s):\n${lines.join("\n")}`);
+      return textResult(pagedListText("collection", lines, data, params.offset ?? 0));
     }
   );
 
@@ -202,22 +230,24 @@ export function registerCaptainTools(server: McpServer): void {
     "captain_list_documents",
     {
       title: "List documents in a Captain collection",
-      description: "List all documents in a Captain collection with file names, types, and chunk counts.",
+      description: "List documents in a Captain collection with file names, types, and chunk counts, paginated.",
       inputSchema: {
         collection: z.string().describe("Collection name"),
-        limit: z.number().optional().describe("Max documents to return (default 100)"),
-        offset: z.number().optional().describe("Pagination offset (default 0)"),
+        limit: z.number().int().min(1).max(1000).optional().describe("Max documents to return (default 100, max 1000)"),
+        offset: z.number().int().min(0).optional().describe("Pagination offset (default 0)"),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const qs = `?limit=${params.limit ?? 100}&offset=${params.offset ?? 0}`;
-      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/documents${qs}`);
+      const qs = new URLSearchParams();
+      if (params.limit !== undefined) qs.set("limit", String(params.limit));
+      if (params.offset !== undefined) qs.set("offset", String(params.offset));
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/documents${suffix}`);
       const docs = data.documents || [];
       if (docs.length === 0) return textResult(`No documents in '${params.collection}'.`);
       const lines = docs.map((d: any) => `- ${d.filename || d.file_name || "Unknown"} (${d.chunk_count ?? 0} chunks, ID: ${d.file_id || d.document_id || "N/A"})`);
-      const total = data.total_count ?? docs.length;
-      return textResult(`${total} document(s) in '${params.collection}':\n${lines.join("\n")}`);
+      return textResult(pagedListText("document", lines, data, params.offset ?? 0, ` in '${params.collection}'`));
     }
   );
 
