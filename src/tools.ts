@@ -623,11 +623,15 @@ export function registerCaptainTools(server: McpServer): void {
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
+      // API field names are account_id/access_key_id/secret_access_key
+      // (IndexR2Request); the r2_-prefixed spellings are this tool's INPUT
+      // params only. Sending them through verbatim made the API 422 with
+      // "Field required" on every call since the tool shipped.
       const body: Record<string, unknown> = {
         bucket_name: params.bucket_name,
-        r2_account_id: params.r2_account_id,
-        r2_access_key_id: params.r2_access_key_id,
-        r2_secret_access_key: params.r2_secret_access_key,
+        account_id: params.r2_account_id,
+        access_key_id: params.r2_access_key_id,
+        secret_access_key: params.r2_secret_access_key,
         processing_type: params.processing_type || "advanced",
       };
       if (params.jurisdiction && params.jurisdiction !== "default") body.jurisdiction = params.jurisdiction;
