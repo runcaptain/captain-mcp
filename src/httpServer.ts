@@ -6,7 +6,7 @@
  *   legacy  Bearer cap_* — raw passthrough, byte-identical to the pre-OAuth
  *           server. Always available.
  *   oauth   any other Bearer — Captain-issued at+jwt, verified LOCALLY
- *           against Captain's JWKS (requireBearerAuth + CaptainTokenVerifier;
+ *           against the token issuer's JWKS (requireBearerAuth + CaptainTokenVerifier;
  *           no per-request introspection). Gated by CAPTAIN_OAUTH_ENABLED
  *           (default off => the merge is inert and the flag flip is the
  *           release).
@@ -44,6 +44,9 @@ const MCP_PATH = "/mcp";
 const OAUTH_ENABLED = process.env.CAPTAIN_OAUTH_ENABLED === "true";
 const ISSUER = (process.env.CAPTAIN_OAUTH_ISSUER || "https://api.captain.dev").replace(/\/+$/, "");
 const JWKS_URL = process.env.CAPTAIN_JWKS_URL || `${ISSUER}/.well-known/jwks.json`;
+// Token `iss` may differ from the discovery origin when the metadata document is
+// served by Captain but tokens are minted by Auth0 (DCR-shim mode).
+const TOKEN_ISSUER = process.env.CAPTAIN_OAUTH_TOKEN_ISSUER || ISSUER;
 const PUBLIC_MCP_URL = process.env.CAPTAIN_MCP_PUBLIC_URL || "https://mcp.runcaptain.com/mcp";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp-http] ${msg}\n`);
@@ -158,7 +161,7 @@ async function main(): Promise<void> {
     }, 15 * 60 * 1000).unref();
 
     const verifier = new CaptainTokenVerifier({
-      jwksUrl: JWKS_URL, issuer: ISSUER, audience: PUBLIC_MCP_URL,
+      jwksUrl: JWKS_URL, issuer: TOKEN_ISSUER, audience: PUBLIC_MCP_URL,
     });
     const bearerAuth = requireBearerAuth({
       verifier,
@@ -185,14 +188,16 @@ async function main(): Promise<void> {
         const auth = (req as Request & {
           auth?: { token: string; extra?: Record<string, unknown> };
         }).auth;
-        // Deliberately NO organizationId in oauth mode: the org lives in the
-        // token's claims and the API's McpOAuthMiddleware derives it there —
-        // sending a header would re-create the header/claim divergence the
-        // security review removed.
+        // The token identifies the USER; the org is per connection: ?org= on
+        // the MCP URL (forwarded as X-Organization-ID), else the API falls
+        // back to the org the user picked on the consent page. The API
+        // re-checks membership on every request either way.
+        const org = orgFrom(req);
         void serveMcp(req, res, {
           apiKey: auth!.token,
           mode: "oauth",
           environment: envFrom(req) || "development",
+          ...(org ? { organizationId: org } : {}),
         });
       });
     });

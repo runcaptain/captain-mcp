@@ -40,7 +40,11 @@ services:
         value: "false"
       - name: CAPTAIN_OAUTH_ISSUER
         value: "https://api.captain.dev"
+      # Discovery is served by the API; the tokens themselves are minted by
+      # Auth0 (Captain's tenant), so verification pins Auth0's issuer + keys.
+      - name: CAPTAIN_OAUTH_TOKEN_ISSUER
+        value: "https://auth.captain.dev/"
       - name: CAPTAIN_JWKS_URL
-        value: "https://api.captain.dev/.well-known/jwks.json"
+        value: "https://auth.captain.dev/.well-known/jwks.json"
       - name: CAPTAIN_MCP_PUBLIC_URL
         value: "https://mcp.runcaptain.com/mcp"

@@ -150,11 +150,15 @@ the organization and environments to grant.
 ```
 
 The `?env=` query selects the ACTIVE environment per config entry
-(`development` when omitted); one login covers every entry, as long as the
-token was granted those environments on the consent screen. Access is
-read-only unless you check "Allow writing" at consent. Revoking: the consent
-grant can be revoked via `POST /oauth/revoke` with the refresh token; access
-tokens are stateless and expire within an hour.
+(`development` when omitted); the token must have been granted that
+environment on Captain's consent screen. Access is read-only unless you
+check "Allow writing" at consent. The connection uses the organization you
+picked at consent; to point a second entry at another organization you
+belong to, add `?org=<organization id>` to its URL. Login itself is your
+Captain account (Auth0): the tokens are Auth0-issued, verified locally by
+this server against Auth0's keys. Revoking: `POST /oauth/revoke` with the
+refresh token, or "Clear authentication" in your MCP client; access tokens
+are stateless and expire within an hour.
 
 `Authorization: Bearer cap_...` keys keep working unchanged (below).
 
