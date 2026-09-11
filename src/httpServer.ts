@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Hosted Captain MCP server (mcp.runcaptain.com) — Express 5.
+ * Hosted Captain MCP server (mcp.captain.dev; mcp.runcaptain.com kept as an alias) — Express 5.
  *
  * Two auth modes on one /mcp endpoint:
  *   legacy  Bearer cap_* — raw passthrough, byte-identical to the pre-OAuth
@@ -47,7 +47,26 @@ const JWKS_URL = process.env.CAPTAIN_JWKS_URL || `${ISSUER}/.well-known/jwks.jso
 // Token `iss` may differ from the discovery origin when the metadata document is
 // served by Captain but tokens are minted by Auth0 (DCR-shim mode).
 const TOKEN_ISSUER = process.env.CAPTAIN_OAUTH_TOKEN_ISSUER || ISSUER;
-const PUBLIC_MCP_URL = process.env.CAPTAIN_MCP_PUBLIC_URL || "https://mcp.runcaptain.com/mcp";
+// Every public URL this server is reachable at (canonical first). The
+// protected-resource metadata, the WWW-Authenticate challenge and the token
+// audience are all per host: an MCP client checks that the advertised
+// `resource` matches the URL it connected to, and Auth0 mints one audience
+// per registered API — so the legacy host keeps its own identity rather than
+// being told it is somebody else.
+const PUBLIC_MCP_URLS: string[] = (
+  process.env.CAPTAIN_MCP_PUBLIC_URLS
+  || process.env.CAPTAIN_MCP_PUBLIC_URL
+  || "https://mcp.captain.dev/mcp,https://mcp.runcaptain.com/mcp"
+).split(",").map((u) => u.trim()).filter(Boolean);
+const PUBLIC_MCP_URL = PUBLIC_MCP_URLS[0];
+const PUBLIC_URL_BY_HOST = new Map(PUBLIC_MCP_URLS.map((u) => [new URL(u).host.toLowerCase(), u]));
+
+/** The public URL for the host a request arrived on; the canonical one for any other. */
+function publicUrlFor(req: Request): string {
+  const host = (req.headers["x-forwarded-host"] ?? req.headers.host);
+  const h = (Array.isArray(host) ? host[0] : host)?.split(",")[0]?.trim().toLowerCase();
+  return (h && PUBLIC_URL_BY_HOST.get(h)) || PUBLIC_MCP_URL;
+}
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp-http] ${msg}\n`);
 
@@ -162,24 +181,29 @@ async function main(): Promise<void> {
     // Serves /.well-known/oauth-protected-resource/mcp (and mirrors the AS
     // metadata document — a second serving surface for the boot-fetched copy,
     // which is why it is re-fetched periodically below).
-    app.use(mcpAuthMetadataRouter({
+    // One metadata router per public host, dispatched on the request's host.
+    const metadataRouters = new Map(PUBLIC_MCP_URLS.map((u) => [u, mcpAuthMetadataRouter({
       oauthMetadata,
-      resourceServerUrl: new URL(PUBLIC_MCP_URL),
+      resourceServerUrl: new URL(u),
       scopesSupported: ["captain:read", "captain:write"],
       resourceName: "Captain",
-    }));
+    })]));
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      metadataRouters.get(publicUrlFor(req))!(req, res, next);
+    });
     setInterval(() => {
       fetchAsMetadata().then(m => Object.assign(oauthMetadata, m)).catch(() => {});
     }, 15 * 60 * 1000).unref();
 
     const verifier = new CaptainTokenVerifier({
-      jwksUrl: JWKS_URL, issuer: TOKEN_ISSUER, audience: PUBLIC_MCP_URL,
+      jwksUrl: JWKS_URL, issuer: TOKEN_ISSUER, audiences: PUBLIC_MCP_URLS,
     });
-    const bearerAuth = requireBearerAuth({
+    // The 401 challenge points at the metadata of the host the client used.
+    const bearerAuths = new Map(PUBLIC_MCP_URLS.map((u) => [u, requireBearerAuth({
       verifier,
       requiredScopes: ["captain:read"],
-      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL(PUBLIC_MCP_URL)),
-    });
+      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL(u)),
+    })]));
 
     app.all(MCP_PATH, (req: Request, res: Response) => {
       const token = bearerFrom(req);
@@ -196,7 +220,7 @@ async function main(): Promise<void> {
       // with WWW-Authenticate resource_metadata — the discovery trigger).
       // requireBearerAuth writes 401/403 responses itself and only invokes
       // the callback on success — there is no error to forward.
-      bearerAuth(req, res, () => {
+      bearerAuths.get(publicUrlFor(req))!(req, res, () => {
         const auth = (req as Request & {
           auth?: { token: string; scopes?: string[]; extra?: Record<string, unknown> };
         }).auth;

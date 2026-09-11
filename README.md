@@ -143,7 +143,7 @@ the organization and environments to grant.
 ```json
 {
   "mcpServers": {
-    "captain": { "url": "https://mcp.runcaptain.com/mcp" }
+    "captain": { "url": "https://mcp.captain.dev/mcp" }
   }
 }
 ```
@@ -166,7 +166,7 @@ hour.
 ## Hosted (remote) server
 
 Instead of running the stdio server locally, connect to the hosted Captain MCP
-over HTTP at **`https://mcp.runcaptain.com/mcp`**. Authenticate with your Captain
+over HTTP at **`https://mcp.captain.dev/mcp`**. Authenticate with your Captain
 API key as a bearer token — the key implies your organization, so no
 organization id is needed.
 
@@ -174,7 +174,7 @@ organization id is needed.
 {
   "mcpServers": {
     "captain": {
-      "url": "https://mcp.runcaptain.com/mcp",
+      "url": "https://mcp.captain.dev/mcp",
       "headers": { "Authorization": "Bearer cap_..." }
     }
   }
