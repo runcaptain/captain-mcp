@@ -37,7 +37,7 @@ services:
       # is deliberate and load-bearing. Flip CAPTAIN_OAUTH_ENABLED to "true"
       # to release OAuth once the API-side endpoints are live in prod.
       - name: CAPTAIN_OAUTH_ENABLED
-        value: "false"
+        value: "true"
       - name: CAPTAIN_OAUTH_ISSUER
         value: "https://api.captain.dev"
       # Discovery is served by the API; the tokens themselves are minted by
