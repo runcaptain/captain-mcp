@@ -143,22 +143,23 @@ the organization and environments to grant.
 ```json
 {
   "mcpServers": {
-    "captain": { "url": "https://mcp.runcaptain.com/mcp" },
-    "captain-prod": { "url": "https://mcp.runcaptain.com/mcp?env=production" }
+    "captain": { "url": "https://mcp.runcaptain.com/mcp" }
   }
 }
 ```
 
-The `?env=` query selects the ACTIVE environment per config entry
-(`development` when omitted); the token must have been granted that
-environment on Captain's consent screen. Access is read-only unless you
-check "Allow writing" at consent. The connection uses the organization you
-picked at consent; to point a second entry at another organization you
-belong to, add `?org=<organization id>` to its URL. Login itself is your
-Captain account (Auth0): the tokens are Auth0-issued, verified locally by
-this server against Auth0's keys. Revoking: `POST /oauth/revoke` with the
-refresh token, or "Clear authentication" in your MCP client; access tokens
-are stateless and expire within an hour.
+One URL covers every environment. Each tool takes an optional `environment`
+argument (`development` — the default — `staging`, or `production`); the
+agent picks it per call, and the API refuses any environment you did not
+approve on the consent screen. Access is read-only unless you left "Allow
+writing" on at consent. The connection uses the organization you picked
+there; to point one at another organization you belong to, add
+`?org=<organization id>` to the URL. (`?env=<name>` on the URL is still
+accepted and sets the default for that entry.) Login is your Captain
+account (Auth0); tokens are Auth0-issued and verified locally by this server
+against Auth0's keys. Revoking: `POST /oauth/revoke` with the refresh token,
+or "Clear authentication" in your MCP client; access tokens expire within an
+hour.
 
 `Authorization: Bearer cap_...` keys keep working unchanged (below).
 

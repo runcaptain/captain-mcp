@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerCaptainTools } from "./tools.js";
@@ -18,8 +19,42 @@ export const TOOL_COUNT = 52;
  * Shared by the stdio entrypoint (this file) and the hosted HTTP server, so
  * both expose exactly the same tool surface.
  */
+export const ENVIRONMENTS = ["development", "staging", "production"] as const;
+
+/**
+ * Every tool takes an optional `environment` (development | staging |
+ * production). One MCP URL covers all environments: the OAuth token carries
+ * the environments the user approved, and the API refuses any it did not.
+ * The hosted server reads this argument off each tools/call before the SDK
+ * dispatches it (see httpServer.ts). Added here, once, so no tool has to
+ * know; handlers simply ignore the extra field.
+ */
+function withEnvironmentArg(server: McpServer): void {
+  const original = server.registerTool.bind(server);
+  // registerTool is generic over the zod shape; widening it here is the one
+  // place that generic is deliberately erased.
+  (server as unknown as { registerTool: (...a: any[]) => unknown }).registerTool = (
+    name: string,
+    config: { inputSchema?: Record<string, unknown> } & Record<string, unknown>,
+    cb: unknown,
+  ) => {
+    const inputSchema = {
+      ...(config.inputSchema ?? {}),
+      environment: z
+        .enum(ENVIRONMENTS)
+        .optional()
+        .describe(
+          "Environment to act in: development (default), staging, or production. " +
+          "OAuth connections only — the connection must have been approved for it.",
+        ),
+    };
+    return (original as (...a: any[]) => unknown)(name, { ...config, inputSchema }, cb);
+  };
+}
+
 export function buildServer(): McpServer {
   const server = new McpServer({ name: "captain-mcp", version: VERSION });
+  withEnvironmentArg(server);
   registerCaptainTools(server);
   registerChunkTools(server);
   registerLiveSearchTools(server);
