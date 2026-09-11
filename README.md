@@ -134,6 +134,34 @@ Drop a `.cursor/rules/captain.mdc` (Cursor) or `CLAUDE.md` snippet (Claude Code)
 When searching docs or recalling past decisions, prefer captain_search, captain_save, and captain_find over grep/WebFetch. Use the repo basename as the search collection; captain_save auto-creates it.
 ```
 
+## Connecting with OAuth (recommended, once enabled)
+
+No API key needed: add the server URL and your MCP client discovers Captain's
+OAuth flow, opens a browser to log in with your Captain account, and you pick
+the organization and environments to grant.
+
+```json
+{
+  "mcpServers": {
+    "captain": { "url": "https://mcp.runcaptain.com/mcp" },
+    "captain-prod": { "url": "https://mcp.runcaptain.com/mcp?env=production" }
+  }
+}
+```
+
+The `?env=` query selects the ACTIVE environment per config entry
+(`development` when omitted); the token must have been granted that
+environment on Captain's consent screen. Access is read-only unless you
+check "Allow writing" at consent. The connection uses the organization you
+picked at consent; to point a second entry at another organization you
+belong to, add `?org=<organization id>` to its URL. Login itself is your
+Captain account (Auth0): the tokens are Auth0-issued, verified locally by
+this server against Auth0's keys. Revoking: `POST /oauth/revoke` with the
+refresh token, or "Clear authentication" in your MCP client; access tokens
+are stateless and expire within an hour.
+
+`Authorization: Bearer cap_...` keys keep working unchanged (below).
+
 ## Hosted (remote) server
 
 Instead of running the stdio server locally, connect to the hosted Captain MCP
