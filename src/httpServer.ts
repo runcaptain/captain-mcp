@@ -198,17 +198,25 @@ async function main(): Promise<void> {
       // the callback on success — there is no error to forward.
       bearerAuth(req, res, () => {
         const auth = (req as Request & {
-          auth?: { token: string; extra?: Record<string, unknown> };
+          auth?: { token: string; scopes?: string[]; extra?: Record<string, unknown> };
         }).auth;
         // The token identifies the USER; the org is per connection: ?org= on
         // the MCP URL (forwarded as X-Organization-ID), else the API falls
         // back to the org the user picked on the consent page. The API
         // re-checks membership on every request either way.
         const org = orgFrom(req);
+        // Default environment = development when the grant includes it, else
+        // the first environment the user did approve: a consent that unticked
+        // development must not make every default call a 403.
+        const granted = (auth!.scopes ?? [])
+          .filter((s) => s.startsWith("env:"))
+          .map((s) => s.slice(4))
+          .filter((e) => (ENVIRONMENTS as readonly string[]).includes(e));
+        const defaultEnv = granted.includes("development") ? "development" : (granted[0] ?? "development");
         void serveMcp(req, res, {
           apiKey: auth!.token,
           mode: "oauth",
-          environment: envFromCall(req.body) || envFrom(req) || "development",
+          environment: envFromCall(req.body) || envFrom(req) || defaultEnv,
           ...(org ? { organizationId: org } : {}),
         });
       });
