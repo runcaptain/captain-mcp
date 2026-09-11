@@ -40,7 +40,6 @@ export function registerLiveSearchTools(server: McpServer): void {
       const body = {
         content: header + params.note,
         filename,
-        processing_type: "basic" as const,
       };
 
       const endpoint = `collections/${encodeURIComponent(params.collection)}/index/text`;
@@ -90,7 +89,6 @@ export function registerLiveSearchTools(server: McpServer): void {
         inference: false,
         top_k: params.top_k ?? 5,
         rerank: true,
-        rerank_model: "gemini",
       };
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/query`, { method: "POST", body });
       const results = data.search_results || data.results || [];
