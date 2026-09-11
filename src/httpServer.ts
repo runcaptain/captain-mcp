@@ -73,7 +73,7 @@ const log = (msg: string) => process.stderr.write(`[captain-mcp-http] ${msg}\n`)
 /** Hardcoded AS-metadata fallback: an API blip must never block boot. */
 const FALLBACK_AS_METADATA: OAuthMetadata = {
   issuer: ISSUER,
-  authorization_endpoint: "https://www.captain.dev/authorize",
+  authorization_endpoint: `${ISSUER}/oauth/authorize`,
   token_endpoint: `${ISSUER}/oauth/token`,
   registration_endpoint: `${ISSUER}/oauth/register`,
   revocation_endpoint: `${ISSUER}/oauth/revoke`,
