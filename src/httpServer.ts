@@ -32,7 +32,7 @@ import {
   mcpAuthMetadataRouter,
 } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import type { OAuthMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { buildServer, VERSION, TOOL_COUNT } from "./server.js";
+import { buildServer, ENVIRONMENTS, VERSION, TOOL_COUNT } from "./server.js";
 import { runWithConfig, type CaptainConfig } from "./captainClient.js";
 import { CaptainTokenVerifier } from "./auth/tokenVerifier.js";
 
@@ -90,6 +90,18 @@ function envFrom(req: Request): string | undefined {
   const q = typeof req.query.env === "string" ? req.query.env : undefined;
   const h = req.headers["x-captain-environment"];
   return q || (Array.isArray(h) ? h[0] : h) || undefined;
+}
+
+/**
+ * The `environment` argument of a tools/call, if any. Stateless transport
+ * means one JSON-RPC message per POST, so the request's config IS the
+ * call's config. Precedence: tool argument > ?env= / header > development.
+ */
+function envFromCall(body: unknown): string | undefined {
+  const b = body as { method?: string; params?: { arguments?: { environment?: unknown } } } | undefined;
+  if (!b || b.method !== "tools/call") return undefined;
+  const e = b.params?.arguments?.environment;
+  return typeof e === "string" && (ENVIRONMENTS as readonly string[]).includes(e) ? e : undefined;
 }
 
 function orgFrom(req: Request): string | undefined {
@@ -196,7 +208,7 @@ async function main(): Promise<void> {
         void serveMcp(req, res, {
           apiKey: auth!.token,
           mode: "oauth",
-          environment: envFrom(req) || "development",
+          environment: envFromCall(req.body) || envFrom(req) || "development",
           ...(org ? { organizationId: org } : {}),
         });
       });
