@@ -8,9 +8,9 @@
  * audience + `typ: at+jwt` (RFC 9068 — nothing else this issuer ever signs
  * can be confused into an access token) enforced, 60s clock tolerance.
  */
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from "jose";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import { InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import { InvalidTokenError, ServerError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 
 export interface VerifierSettings {
   jwksUrl: string;
@@ -35,8 +35,21 @@ export class CaptainTokenVerifier {
         typ: "at+jwt",
         clockTolerance: 60,
       }));
-    } catch {
-      throw new InvalidTokenError("Invalid or expired access token");
+    } catch (e) {
+      // Only a verdict ABOUT THE TOKEN is a 401. A JWKS fetch failure or an
+      // unknown-kid cooldown is our outage, not the client's: report it as a
+      // 500 so clients do not burn a refresh-token rotation on every request.
+      if (
+        e instanceof joseErrors.JWTExpired ||
+        e instanceof joseErrors.JWTClaimValidationFailed ||
+        e instanceof joseErrors.JWSSignatureVerificationFailed ||
+        e instanceof joseErrors.JWSInvalid ||
+        e instanceof joseErrors.JWTInvalid ||
+        e instanceof joseErrors.JWKSNoMatchingKey
+      ) {
+        throw new InvalidTokenError("Invalid or expired access token");
+      }
+      throw new ServerError("Token verification temporarily unavailable");
     }
     const scopes = typeof payload.scope === "string" ? payload.scope.split(" ") : [];
     if (typeof payload.exp !== "number") {
