@@ -44,8 +44,8 @@ export const BoostClauseSchema = z.object({
     .describe("Requires `field`. Boost chunks whose `field` matches any of these values (max 50)."),
   chunk_ids: z.array(z.string()).max(100).optional()
     .describe("Use instead of field/eq/in to boost specific chunks (a chunk_id, or document_id:chunk_index; max 100)."),
-  weight: z.number().min(0.2).max(5).optional()
-    .describe("Score multiplier 0.2-5.0. Start at 1.5-2.0; 3.0-5.0 only when boosted chunks compete with each other; below 1.0 demotes."),
+  weight: z.number().min(0.2).max(5)
+    .describe("Score multiplier 0.2-5.0 (required). Start at 1.5-2.0; 3.0-5.0 only when boosted chunks compete with each other; below 1.0 demotes."),
   reserve: z.number().int().min(0).optional()
     .describe("Guarantee this many result slots for the rule regardless of the reranker (sum of reserves must not exceed limit)."),
 });
@@ -59,6 +59,8 @@ export const BoostClauseSchema = z.object({
 export const QueryV3ConfigSchema = z.object({
   limit: z.number().int().min(1).max(100).optional()
     .describe("Max ranked chunks to return (default 10)."),
+  max_chunks_per_document: z.number().int().min(1).max(100).optional()
+    .describe("Cap on chunks from any one document, for document-level diversity: `limit: 5` with `max_chunks_per_document: 1` returns the five most relevant documents, one chunk each. Default: no cap."),
   filter: z.record(z.any()).optional()
     .describe("Document-metadata filter. Top-level keys only (never nested under metadata). Bare value = $eq. Operators: $eq $ne $gt $gte $lt $lte $in $nin $and $or. Scope to documents with {\"file_id\": {\"$in\": [...]}}."),
   semantic_ratio: z.number().min(0).max(1).optional()
@@ -92,6 +94,7 @@ export type QueryV3Config = z.infer<typeof QueryV3ConfigSchema>;
  */
 export function buildQueryV3Body(query: string, cfg: QueryV3Config): Record<string, unknown> {
   const body: Record<string, unknown> = { query, limit: cfg.limit ?? 10 };
+  if (cfg.max_chunks_per_document !== undefined) body.max_chunks_per_document = cfg.max_chunks_per_document;
   if (cfg.filter !== undefined) body.filter = cfg.filter;
   if (cfg.semantic_ratio !== undefined) body.semantic_ratio = cfg.semantic_ratio;
   if (cfg.rerank !== undefined) body.rerank = cfg.rerank;

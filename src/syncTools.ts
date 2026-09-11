@@ -114,6 +114,7 @@ export function registerSyncTools(server: McpServer): void {
         endpoint_url: z.string().optional().describe("access_key: S3-compatible endpoint URL. Omit for real AWS S3. (For R2/Supabase/Backblaze prefer their dedicated create tools.)"),
         region: z.string().optional().describe("Bucket region (default: us-east-1)"),
         processing_type: processingType.optional(),
+        metadata_mapping: z.record(z.string()).optional().describe("Maps an S3 object metadata key to a Captain metadata field name."),
         ...commonSyncFields,
       },
     },
@@ -143,6 +144,7 @@ export function registerSyncTools(server: McpServer): void {
         region: params.region || "us-east-1",
         ...buildCommonBody(params),
       };
+      if (params.metadata_mapping) body.metadata_mapping = params.metadata_mapping;
       log(`Creating S3 sync for '${params.bucket}' → '${params.collection}'`);
       const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/s3`, { method: "POST", body });
       return textResult(`S3 sync created and backfill started.\n\n${summarizeSync(data)}`);
@@ -297,6 +299,61 @@ export function registerSyncTools(server: McpServer): void {
     },
   );
 
+  // ── captain_create_gcs_sync ─────────────────────────────────
+  server.registerTool(
+    "captain_create_gcs_sync",
+    {
+      title: "Create a Google Cloud Storage sync",
+      description:
+        "Create a sync that keeps a Captain collection up to date with a Google Cloud Storage bucket, and start the initial backfill. " +
+        "Authenticates with a service-account JSON key (roles/storage.objectViewer on the bucket); the key is stored securely and never returned.",
+      inputSchema: {
+        collection: z.string().describe("Destination collection name"),
+        bucket: z.string().describe("GCS bucket to keep in sync"),
+        service_account_json: z.string().describe("Google service-account key JSON (type 'service_account'), stringified"),
+        processing_type: processingType.optional(),
+        metadata_mapping: z.record(z.string()).optional().describe("Maps a GCS object metadata key to a Captain metadata field name."),
+        ...commonSyncFields,
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body: Record<string, unknown> = {
+        bucket: params.bucket,
+        service_account_json: params.service_account_json,
+        ...buildCommonBody(params),
+      };
+      if (params.metadata_mapping) body.metadata_mapping = params.metadata_mapping;
+      log(`Creating GCS sync for '${params.bucket}' → '${params.collection}'`);
+      const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/gcs`, { method: "POST", body });
+      return textResult(`GCS sync created and backfill started.\n\n${summarizeSync(data)}`);
+    },
+  );
+
+  // ── captain_validate_sync ───────────────────────────────────
+  server.registerTool(
+    "captain_validate_sync",
+    {
+      title: "Validate sync credentials before creating a sync",
+      description:
+        "Dry-run a sync: prove the storage credentials and bucket with one cheap read, creating nothing. " +
+        "Pass the same fields you would give the matching captain_create_*_sync tool (bucket, credentials, prefix, ...); " +
+        "on failure the response names the field to fix. Use it before committing a sync.",
+      inputSchema: {
+        collection: z.string().describe("Destination collection name"),
+        provider: z.enum(["s3", "r2", "supabase", "backblaze", "azure", "gcs"]).describe("Storage provider"),
+        config: z.record(z.any()).describe("The provider's create body, exactly as the create tool would send it (e.g. for s3: bucket, auth {type, ...}, region; for azure: container, account_name, account_key)"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Validating ${params.provider} sync credentials for '${params.collection}'`);
+      const body = { processing_type: "advanced", ...params.config };
+      const data = await captainFetch(config, `collections/${enc(params.collection)}/sync/${params.provider}/validate`, { method: "POST", body });
+      return textResult(JSON.stringify(data, null, 2));
+    },
+  );
+
   // ── captain_list_syncs ──────────────────────────────────────
   server.registerTool(
     "captain_list_syncs",
@@ -305,11 +362,14 @@ export function registerSyncTools(server: McpServer): void {
       description:
         "List all syncs (cloud-storage → collection connections) for the configured organization, " +
         "with their storage source, status, schedule, and last-sync state.",
-      inputSchema: {},
+      inputSchema: {
+        collection_name: z.string().optional().describe("Only syncs feeding this collection"),
+      },
     },
-    async (): Promise<ToolResult> => {
+    async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const data = await captainFetch(config, "syncs");
+      const qs = params.collection_name ? `?collection_name=${enc(params.collection_name)}` : "";
+      const data = await captainFetch(config, `syncs${qs}`);
       const syncs = data.connections || data.syncs || [];
       if (syncs.length === 0) return textResult("No syncs found.");
       const lines = syncs.map((s: any) => {
@@ -347,9 +407,11 @@ export function registerSyncTools(server: McpServer): void {
       description:
         "Update a sync's configuration: scope (prefix / include / exclude patterns), deletion policy, " +
         "schedule (sync_interval_minutes), custom metadata, or pause/resume it via status. " +
-        "Only the fields you pass are changed. Credentials and storage source cannot be changed here.",
+        "Only the fields you pass are changed. The storage source cannot be changed here; the one credential that can is " +
+        "an Azure storage account key (`account_key`, for key rotation).",
       inputSchema: {
         sync_id: z.string().describe("The sync id to update"),
+        account_key: z.string().optional().describe("Azure syncs only: the new storage account access key (key rotation)"),
         prefix: z.string().optional().describe("New key prefix to scope the sync"),
         include_patterns: z.array(z.string()).optional().describe("Replacement include glob patterns"),
         exclude_patterns: z.array(z.string()).optional().describe("Replacement exclude glob patterns"),
@@ -369,6 +431,7 @@ export function registerSyncTools(server: McpServer): void {
       if (params.status) body.status = params.status;
       if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
       if (params.sync_interval_minutes !== undefined) body.sync_interval_minutes = params.sync_interval_minutes;
+      if (params.account_key !== undefined) body.account_key = params.account_key;
       if (Object.keys(body).length === 0) {
         throw new Error("Provide at least one field to update.");
       }
@@ -421,6 +484,7 @@ export function registerSyncTools(server: McpServer): void {
         `Added: ${data.added ?? 0}, Modified: ${data.modified ?? 0}, Removed: ${data.removed ?? 0}, Unchanged: ${data.unchanged ?? 0}`,
       ];
       if (data.deleted_documents != null) lines.push(`Documents deleted: ${data.deleted_documents}`);
+      if (data.deletions_withheld) lines.push(`Deletions withheld (another connector still references the file): ${data.deletions_withheld}`);
       return textResult(lines.join("\n"));
     },
   );
@@ -431,8 +495,9 @@ export function registerSyncTools(server: McpServer): void {
     {
       title: "Subscribe an event webhook for a sync",
       description:
-        "Mint a webhook secret and get the subscribe URL plus setup steps for wiring S3 ObjectCreated/ObjectRemoved " +
-        "events through an SNS topic to Captain, enabling near-real-time change detection (faster than scheduled reconcile). " +
+        "Enable near-real-time change detection for a sync (faster than scheduled reconcile). For S3 the sync's SQS queue is " +
+        "subscribed to your SNS topic (response: queue_arn); for the other providers a signed ingest URL is minted for you to " +
+        "point the bucket's event notifications at (response: ingest_url), with setup steps. " +
         "For an S3 access-key sync, `sns_topic_arn` is required: it is the ARN of the SNS topic you created for your " +
         "bucket's ObjectCreated/ObjectRemoved notifications (e.g. 'arn:aws:sns:us-east-1:123456789012:captain-bucket-events'). " +
         "Captain subscribes to that topic to receive the events.",
@@ -446,6 +511,8 @@ export function registerSyncTools(server: McpServer): void {
               "'arn:aws:sns:us-east-1:123456789012:captain-bucket-events'. Required to enroll real-time events for an " +
               "S3 connector; the API returns 422 without it.",
           ),
+        rotate_secret: z.boolean().optional()
+          .describe("Mint a fresh webhook secret and revoke the current ingest URL (use after a suspected leak). Default false."),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -453,12 +520,13 @@ export function registerSyncTools(server: McpServer): void {
       log(`Subscribing event webhook for sync '${params.sync_id}'`);
       const body: Record<string, unknown> = {};
       if (params.sns_topic_arn !== undefined) body.sns_topic_arn = params.sns_topic_arn;
+      if (params.rotate_secret !== undefined) body.rotate_secret = params.rotate_secret;
       const data = await captainFetch(config, `syncs/${enc(params.sync_id)}/webhooks`, { method: "POST", body });
-      const lines = [
-        `Event webhook enabled for sync '${params.sync_id}'.`,
-        `Subscribe URL: ${data.subscribe_url}`,
-        `Secret set: ${data.secret_set ?? true}`,
-      ];
+      const lines = [`Event webhook enabled for sync '${params.sync_id}'.`];
+      if (data.queue_arn) lines.push(`Queue ARN: ${data.queue_arn}`);
+      if (data.topic_arn_bound) lines.push(`Subscribed to topic: ${data.topic_arn_bound}`);
+      if (data.ingest_url) lines.push(`Ingest URL (point your bucket's event notifications here): ${data.ingest_url}`);
+      lines.push(`Secret set: ${data.secret_set ?? true}`);
       if (Array.isArray(data.instructions) && data.instructions.length) {
         lines.push("", "Setup steps:", ...data.instructions.map((s: string, i: number) => `  ${i + 1}. ${s}`));
       }

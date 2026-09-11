@@ -7,13 +7,15 @@ MCP server for [Captain](https://runcaptain.com) — multimodal RAG search and p
 Exposes 19 tools:
 
 **Core search & collection management (17):**
-- `captain_search`, `captain_list_collections`, `captain_create_collection`, `captain_delete_collection`
+- `captain_search` (v2: metadata filter, semantic ratio, rerank options), `captain_list_collections`, `captain_create_collection` (description, metadata), `captain_delete_collection`
 - `captain_copy_collection`: clone a collection (vectors branched, no indexing credits)
 - `captain_change_environment`: move a collection between development, staging, and production. API keys are environment-scoped: `cap_dev_` keys see development, `cap_prod_` keys see production, and `cap_stage_` keys see staging. A moved collection disappears from keys of the old environment, and attached syncs do not follow automatically.
-- `captain_list_documents`, `captain_delete_document`, `captain_wipe_documents`
-- `captain_job_status`, `captain_cancel_job`
-- `captain_index_url`, `captain_index_youtube`, `captain_index_text`, `captain_index_file`
-- `captain_index_s3`, `captain_index_gcs`, `captain_index_azure`, `captain_index_r2`
+- `captain_list_documents` (filter by custom metadata), `captain_get_document`, `captain_get_document_page`, `captain_create_asset_urls` (viewable URLs for figure regions), `captain_set_document_metadata`, `captain_update_document_metadata`, `captain_delete_document`, `captain_wipe_documents`
+- `captain_list_jobs`, `captain_job_status` (per-file results, credits billed, PII report pointer), `captain_cancel_job`, `captain_rollback_job`, `captain_get_pii_report`, `captain_delete_pii_report`
+- `captain_validate_parsing_script`: check a JavaScript parsing script in the sandbox before passing it as `parsing_script` to an index tool
+- `captain_index_url`, `captain_index_youtube` (transcript / audio / video mode), `captain_index_text`, `captain_index_file`
+- `captain_index_s3` (assume-role or access key), `captain_index_gcs`, `captain_index_azure`, `captain_index_r2` (jurisdiction incl. `us`)
+- Every index tool accepts `custom_metadata`, `mask_pii`, `max_files`, `skip_existing`, `overwrite_existing`, `transcription_language`, and `parsing_script` where the endpoint does
 
 `captain_index_file` uploads local paths (PDF, DOCX, XLSX, CSV, TXT, images, …) via multipart/form-data — max 20 files, 100MB each.
 
@@ -22,10 +24,11 @@ Exposes 19 tools:
 - `captain_find` — semantic search over saved notes, with timestamps surfaced so stale notes are obvious.
 
 **Storage syncs (11):**
-- `captain_create_s3_sync`, `captain_create_r2_sync`, `captain_create_supabase_sync`, `captain_create_backblaze_sync`, `captain_create_azure_sync` — create a sync that keeps a collection continuously up to date with a cloud-storage bucket (initial backfill + scheduled/event/on-demand updates).
+- `captain_create_s3_sync`, `captain_create_r2_sync`, `captain_create_supabase_sync`, `captain_create_backblaze_sync`, `captain_create_azure_sync`, `captain_create_gcs_sync` — create a sync that keeps a collection continuously up to date with a cloud-storage bucket (initial backfill + scheduled/event/on-demand updates).
 - `captain_list_syncs`, `captain_get_sync`, `captain_update_sync`, `captain_delete_sync` — manage existing syncs (scope, schedule, deletion policy, pause/resume; delete is a soft-delete that retains indexed docs).
 - `captain_reconcile_sync` — run an on-demand diff-and-index now; returns counts of added/modified/removed.
-- `captain_subscribe_sync_webhook` — mint a webhook secret + subscribe URL for near-real-time S3 event updates.
+- `captain_validate_sync` — dry-run a sync's credentials and bucket before creating it.
+- `captain_subscribe_sync_webhook` — enable near-real-time event updates (SNS/SQS for S3, a signed ingest URL for the other providers); `rotate_secret` after a leak.
 
 **Query history (2):**
 - `captain_list_queries` — the queries your keys and agents have run, newest first, scoped to the key's environment; filter by collection, status, and time window, page by cursor, and opt in to `include` (results, request, response) to get each query's retrieved chunks and exact bodies per row.
@@ -39,7 +42,7 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, and `captain_eval` — 52 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, and `captain_eval` — 64 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.

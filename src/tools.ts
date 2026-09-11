@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult, type CaptainConfig } from "./captainClient.js";
+import { RerankOptionsSchema } from "./chunkTools.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -31,6 +32,37 @@ function mimeForPath(path: string): string {
   return MIME_BY_EXT[extname(path).toLowerCase()] || "application/octet-stream";
 }
 
+const metadataValue = z.union([z.string(), z.number(), z.boolean()]);
+
+/**
+ * Request fields every bulk index endpoint shares (IndexS3Request and
+ * friends). Spread into a tool's inputSchema and forwarded with
+ * applyIndexOptions so a knob added to the API lands on every tool at once.
+ */
+const indexOptionFields = {
+  custom_metadata: z.record(metadataValue).optional().describe("Custom metadata attached to every indexed document (filterable in search)"),
+  mask_pii: z.boolean().optional().describe("Mask detected PII (emails, names, SSNs, ...) in parsed text before embedding; a PII report is retained on the job (default false)"),
+  max_files: z.number().int().min(1).optional().describe("Stop after this many files"),
+  skip_existing: z.boolean().optional().describe("Skip files already indexed in the collection (default true)"),
+  overwrite_existing: z.boolean().optional().describe("Re-index and replace files already in the collection (default false)"),
+  transcription_language: z.string().optional().describe("Language code for audio/video transcription, e.g. 'en-US'"),
+  parsing_script: z.string().optional().describe("JavaScript parsing script applied to each file (validate it first with captain_validate_parsing_script)"),
+};
+type IndexOptions = {
+  custom_metadata?: Record<string, string | number | boolean>;
+  mask_pii?: boolean;
+  max_files?: number;
+  skip_existing?: boolean;
+  overwrite_existing?: boolean;
+  transcription_language?: string;
+  parsing_script?: string;
+};
+function applyIndexOptions(body: Record<string, unknown>, p: IndexOptions): void {
+  for (const k of ["custom_metadata", "mask_pii", "max_files", "skip_existing", "overwrite_existing", "transcription_language", "parsing_script"] as const) {
+    if (p[k] !== undefined) body[k] = p[k];
+  }
+}
+
 export function registerCaptainTools(server: McpServer): void {
   // ── captain_search ──────────────────────────────────────────
   server.registerTool(
@@ -44,7 +76,14 @@ export function registerCaptainTools(server: McpServer): void {
         collection: z.string().describe("Collection name to search"),
         query: z.string().describe("Natural language search query"),
         top_k: z.number().optional().describe("Number of results to return (default 10)"),
-        rerank: z.boolean().optional().describe("Enable cross-modal reranking. Required for multimodal collections."),
+        rerank: z.union([z.boolean(), RerankOptionsSchema]).optional()
+          .describe("Rerank results (default true; required for multimodal collections). Object form tunes model / candidate_limit."),
+        metadata_filter: z.record(z.any()).optional()
+          .describe("Document-metadata filter, same operators as captain_search_v3 `filter` ($eq $ne $gt $gte $lt $lte $in $nin $and $or)"),
+        semantic_ratio: z.number().min(0).max(1).optional()
+          .describe("Keyword vs semantic balance: 0 = keyword only (fastest), 1 = semantic only, 0.5 default"),
+        include_archived: z.boolean().optional().describe("Include chunks archived by a sync's 'archive' deletion policy (default false)"),
+        include_bbox: z.boolean().optional().describe("Include layout / bounding-box data per result (default false)"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -55,21 +94,31 @@ export function registerCaptainTools(server: McpServer): void {
         inference: false,
         top_k: params.top_k ?? 10,
         rerank: params.rerank ?? true,
-        rerank_model: "gemini",
       };
+      if (params.metadata_filter !== undefined) body.metadata_filter = params.metadata_filter;
+      if (params.semantic_ratio !== undefined) body.semantic_ratio = params.semantic_ratio;
+      if (params.include_archived !== undefined) body.include_archived = params.include_archived;
+      if (params.include_bbox !== undefined) body.include_bbox = params.include_bbox;
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/query`, { method: "POST", body });
       const results = data.search_results || data.results || [];
-      if (results.length === 0) return textResult("No results found.");
+      const header = [
+        data.query_id ? `query_id: ${data.query_id} (captain_get_query)` : null,
+        data.execution_time_ms != null ? `took: ${data.execution_time_ms} ms` : null,
+      ].filter(Boolean).join(" · ");
+      if (results.length === 0) return textResult(`No results found.${header ? `\n${header}` : ""}`);
       const formatted = results
         .map((r: any, i: number) => {
-          const source = r.filename || r.document_id || "Unknown";
+          const source = r.filename || r.uri || r.document_id || "Unknown";
           const score = r.score?.toFixed(3) ?? "N/A";
+          const rr = r.rerank_score != null ? `, rerank: ${Number(r.rerank_score).toFixed(3)}` : "";
           const content = r.content || r.text || r.chunk || "";
           const modality = r.modality || "text";
-          return `[${i + 1}] (${modality}, score: ${score}) ${source}\n${content}`;
+          const ids = [r.document_id ? `document_id: ${r.document_id}` : null, r.chunk_id ? `chunk_id: ${r.chunk_id}` : null]
+            .filter(Boolean).join(", ");
+          return `[${i + 1}] (${modality}, score: ${score}${rr}) ${source}${ids ? `\n${ids}` : ""}\n${content}`;
         })
         .join("\n\n---\n\n");
-      return textResult(`Found ${results.length} results in '${params.collection}':\n\n${formatted}`);
+      return textResult(`Found ${results.length} results in '${params.collection}'${header ? ` · ${header}` : ""}:\n\n${formatted}`);
     }
   );
 
@@ -86,13 +135,13 @@ export function registerCaptainTools(server: McpServer): void {
       const data = await captainFetch(config, "collections");
       const collections = data.collections || [];
       if (collections.length === 0) return textResult("No collections found.");
-      // Canonical keys with fallback to the retired database_*/file_count
-      // spellings, so the tool works against either API version.
       const lines = collections.map(
         (c: any) =>
-          `- ${c.collection_name ?? c.database_name} (${c.document_count ?? c.file_count ?? 0} files)`
+          `- ${c.collection_name} (${c.document_count ?? 0} files, id: ${c.collection_id ?? "?"}${c.created_at ? `, created ${c.created_at}` : ""})`
       );
-      return textResult(`${collections.length} collection(s):\n${lines.join("\n")}`);
+      const total = data.total_count ?? collections.length;
+      const more = total > collections.length ? ` (showing ${collections.length} of ${total})` : "";
+      return textResult(`${total} collection(s)${more}:\n${lines.join("\n")}`);
     }
   );
 
@@ -104,12 +153,17 @@ export function registerCaptainTools(server: McpServer): void {
       description: "Create a new Captain collection to store and search documents.",
       inputSchema: {
         collection: z.string().describe("Collection name (lowercase, hyphens allowed, e.g. 'my-docs')"),
+        description: z.string().optional().describe("Human-readable description of the collection"),
+        metadata: z.record(z.any()).optional().describe("Collection-level metadata"),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       log(`Creating collection '${params.collection}'`);
-      await captainFetch(config, `collections/${encodeURIComponent(params.collection)}`, { method: "PUT", body: {} });
+      const body: Record<string, unknown> = {};
+      if (params.description !== undefined) body.description = params.description;
+      if (params.metadata !== undefined) body.metadata = params.metadata;
+      await captainFetch(config, `collections/${encodeURIComponent(params.collection)}`, { method: "PUT", body });
       return textResult(`Collection '${params.collection}' created successfully.`);
     }
   );
@@ -180,20 +234,27 @@ export function registerCaptainTools(server: McpServer): void {
           .describe(
             "Name for the copy. Unique within the organization and environment; 3-63 chars, alphanumeric start/end, letters, numbers, hyphens, underscores."
           ),
+        include_graph: z.boolean().optional().describe("Copy chunk relations and chunk metadata along with the documents (default true)"),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       log(`Copying collection '${params.collection}' to '${params.target_name}'`);
+      const body: Record<string, unknown> = { target_name: params.target_name };
+      if (params.include_graph !== undefined) body.include_graph = params.include_graph;
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/copy`, {
         method: "POST",
-        body: { target_name: params.target_name },
+        body,
       });
-      return textResult(
-        `${data.message ?? `Copied '${params.collection}' to '${params.target_name}'.`}\n` +
-          `Documents copied: ${data.documents_copied ?? "unknown"}\n` +
-          `New collection ID: ${data.collection_id ?? data.database_id ?? "unknown"}`
-      );
+      const lines = [
+        data.message ?? `Copied '${params.collection}' to '${params.target_name}'.`,
+        `Documents copied: ${data.documents_copied ?? "unknown"}`,
+        `New collection ID: ${data.collection_id ?? "unknown"}`,
+      ];
+      if (data.relations_copied != null) lines.push(`Relations copied: ${data.relations_copied}`);
+      if (data.chunk_metadata_copied != null) lines.push(`Chunk metadata copied: ${data.chunk_metadata_copied}`);
+      if (data.relations_unresolved) lines.push(`Relations unresolved (target not remapped): ${data.relations_unresolved}`);
+      return textResult(lines.join("\n"));
     }
   );
 
@@ -202,22 +263,34 @@ export function registerCaptainTools(server: McpServer): void {
     "captain_list_documents",
     {
       title: "List documents in a Captain collection",
-      description: "List all documents in a Captain collection with file names, types, and chunk counts.",
+      description:
+        "List documents in a Captain collection with file names, types, chunk counts and indexing status. " +
+        "Filter by custom metadata (e.g. find the document carrying your own record id) and optionally return each document's custom_metadata.",
       inputSchema: {
         collection: z.string().describe("Collection name"),
-        limit: z.number().optional().describe("Max documents to return (default 100)"),
-        offset: z.number().optional().describe("Pagination offset (default 0)"),
+        limit: z.number().int().min(1).max(1000).optional().describe("Max documents to return (default 100, max 1000)"),
+        offset: z.number().int().min(0).optional().describe("Pagination offset (default 0)"),
+        metadata_filter: z.record(z.any()).optional()
+          .describe("Filter over custom_metadata, same grammar as the query filter, e.g. {\"payna_file_id\": \"abc\"} or {\"year\": {\"$gte\": 2024}}"),
+        include_custom_metadata: z.boolean().optional().describe("Return each document's custom_metadata (default false)"),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const qs = `?limit=${params.limit ?? 100}&offset=${params.offset ?? 0}`;
-      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/documents${qs}`);
+      const qs = new URLSearchParams({ limit: String(params.limit ?? 100), offset: String(params.offset ?? 0) });
+      if (params.metadata_filter !== undefined) qs.set("metadata_filter", JSON.stringify(params.metadata_filter));
+      if (params.include_custom_metadata !== undefined) qs.set("include_custom_metadata", String(params.include_custom_metadata));
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/documents?${qs}`, { version: "v3" });
       const docs = data.documents || [];
       if (docs.length === 0) return textResult(`No documents in '${params.collection}'.`);
-      const lines = docs.map((d: any) => `- ${d.filename || d.file_name || "Unknown"} (${d.chunk_count ?? 0} chunks, ID: ${d.file_id || d.document_id || "N/A"})`);
+      const lines = docs.map((d: any) => {
+        const status = d.indexing_status || d.status;
+        const meta = d.custom_metadata && Object.keys(d.custom_metadata).length ? ` metadata: ${JSON.stringify(d.custom_metadata)}` : "";
+        return `- ${d.filename || "Unknown"} (${d.chunk_count ?? 0} chunks${d.content_type ? `, ${d.content_type}` : ""}${status ? `, ${status}` : ""}, ID: ${d.document_id ?? "N/A"})${meta}`;
+      });
       const total = data.total_count ?? docs.length;
-      return textResult(`${total} document(s) in '${params.collection}':\n${lines.join("\n")}`);
+      const more = total > docs.length ? ` (showing ${(params.offset ?? 0) + 1}-${(params.offset ?? 0) + docs.length})` : "";
+      return textResult(`${total} document(s) in '${params.collection}'${more}:\n${lines.join("\n")}`);
     }
   );
 
@@ -263,24 +336,64 @@ export function registerCaptainTools(server: McpServer): void {
     "captain_job_status",
     {
       title: "Check Captain indexing job status",
-      description: "Check the status of a Captain indexing job. Returns progress, stage, file counts, and errors.",
+      description:
+        "Check the status of a Captain indexing job: progress, stage, file counts, per-file results (paginated), " +
+        "credits billed, YouTube mode fallbacks, and the PII report pointer when the job masked PII.",
       inputSchema: {
         job_id: z.string().describe("Job ID returned by an indexing tool"),
+        files_limit: z.number().int().min(1).max(500).optional().describe("Per-file entries to return (default 50, max 500)"),
+        files_cursor: z.string().optional().describe("Cursor from a previous response's files page to fetch the next page of files"),
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const data = await captainFetch(config, `jobs/${encodeURIComponent(params.job_id)}`);
+      const qs = new URLSearchParams();
+      if (params.files_limit !== undefined) qs.set("files_limit", String(params.files_limit));
+      if (params.files_cursor !== undefined) qs.set("files_cursor", params.files_cursor);
+      const data = await captainFetch(config, `jobs/${encodeURIComponent(params.job_id)}${qs.toString() ? `?${qs}` : ""}`);
       const progress = data.progress;
-      let text = `Job: ${params.job_id}\nStatus: ${data.status}`;
-      if (data.progress_message) text += `\nMessage: ${data.progress_message}`;
+      const lines = [`Job: ${params.job_id}`, `Status: ${data.status}`];
+      if (data.collection_name) lines.push(`Collection: ${data.collection_name}`);
+      if (data.job_type) lines.push(`Type: ${data.job_type}`);
+      if (data.progress_message) lines.push(`Message: ${data.progress_message}`);
       if (progress && typeof progress === "object") {
-        if (progress.current_stage) text += `\nStage: ${progress.current_stage}`;
-        if (progress.files_total != null) text += `\nFiles: ${progress.files_processed ?? 0}/${progress.files_total} processed`;
-        if (progress.files_failed) text += ` (${progress.files_failed} failed)`;
+        if (progress.current_stage) lines.push(`Stage: ${progress.current_stage}${progress.stage_description ? ` — ${progress.stage_description}` : ""}`);
+        if (progress.files_total != null) {
+          let f = `Files: ${progress.files_processed ?? 0}/${progress.files_total} processed`;
+          if (progress.files_failed) f += `, ${progress.files_failed} failed`;
+          if (progress.files_skipped) f += `, ${progress.files_skipped} skipped`;
+          lines.push(f);
+        }
       }
-      if (data.error) text += `\nError: ${data.error}`;
-      return textResult(text);
+      if (data.estimated_time_remaining_seconds != null) lines.push(`Estimated remaining: ${data.estimated_time_remaining_seconds}s`);
+      const when = ["created_at", "started_at", "completed_at", "cancelled_at"].filter((k) => data[k]).map((k) => `${k.replace("_at", "")} ${data[k]}`);
+      if (when.length) lines.push(`Timeline: ${when.join(", ")}`);
+      if (data.error_code || data.error_message) lines.push(`Error: ${[data.error_code, data.error_message].filter(Boolean).join(" — ")}`);
+      const b = data.billing;
+      if (b && typeof b === "object") {
+        const c = b.credits && typeof b.credits === "object" ? b.credits : {};
+        const used = c.used ?? c.consumed ?? c.total ?? JSON.stringify(c);
+        lines.push(`Credits: ${used} used${b.unlimited ? " (unlimited plan)" : c.remaining != null ? `, ${c.remaining} remaining of ${b.included_credits}` : ""}`);
+      }
+      if (Array.isArray(data.youtube) && data.youtube.length) {
+        lines.push("YouTube:");
+        for (const v of data.youtube) {
+          lines.push(`  - ${v.video_id}: ${v.mode_used}${v.fell_back_from ? ` (fell back from ${v.fell_back_from})` : ""}${v.error ? ` — ${v.error}` : ""}`);
+        }
+      }
+      if (data.pii_report && typeof data.pii_report === "object") {
+        lines.push(`PII report: ${data.pii_report.state}${data.pii_report.state === "retained" ? " (captain_get_pii_report)" : ""}`);
+      }
+      if (Array.isArray(data.files) && data.files.length) {
+        const failed = data.files.filter((f: any) => f.status && /fail|error/i.test(String(f.status)));
+        lines.push(`Files listed: ${data.files.length}${failed.length ? `, ${failed.length} failed` : ""}`);
+        for (const f of data.files.slice(0, 50)) {
+          lines.push(`  - ${f.uri ?? f.filename ?? "?"} [${f.status ?? "?"}]${f.document_id ? ` document_id: ${f.document_id}` : ""}${f.error_message ? ` — ${f.error_code ? `${f.error_code}: ` : ""}${f.error_message}` : ""}`);
+        }
+        const next = data.files_page?.next_cursor ?? data.files_page?.cursor;
+        if (next) lines.push(`More files: pass files_cursor "${next}"`);
+      }
+      return textResult(lines.join("\n"));
     }
   );
 
@@ -314,6 +427,10 @@ export function registerCaptainTools(server: McpServer): void {
         collection: z.string().describe("Collection name to index into"),
         urls: z.union([z.string(), z.array(z.string())]).describe("URL or array of URLs to index"),
         processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' (OCR + images) or 'basic' (text only)"),
+        custom_metadata: indexOptionFields.custom_metadata,
+        mask_pii: indexOptionFields.mask_pii,
+        transcription_language: indexOptionFields.transcription_language,
+        parsing_script: indexOptionFields.parsing_script,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -322,6 +439,7 @@ export function registerCaptainTools(server: McpServer): void {
       log(`Indexing ${urlList.length} URL(s) into '${params.collection}'`);
       const body: Record<string, unknown> = { processing_type: params.processing_type || "advanced" };
       if (urlList.length === 1) body.url = urlList[0]; else body.urls = urlList;
+      applyIndexOptions(body, params);
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/index/url`, { method: "POST", body });
       return jobStartedResponse(data.job_id, `${urlList.length} URL(s)`);
     }
@@ -332,10 +450,20 @@ export function registerCaptainTools(server: McpServer): void {
     "captain_index_youtube",
     {
       title: "Index YouTube video transcripts",
-      description: "Index YouTube video transcripts into a Captain collection. Supports single or multiple videos (max 20).",
+      description:
+        "Index YouTube videos into a Captain collection (single or multiple, max 20). By default the caption track is " +
+        "indexed as a timestamped transcript; `mode` can index the audio or the full video instead (billed as media), " +
+        "and `on_missing_transcript` decides what happens when a video has no captions.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
         urls: z.union([z.string(), z.array(z.string())]).describe("YouTube URL or array of YouTube URLs (max 20)"),
+        mode: z.enum(["transcript", "audio", "video"]).optional()
+          .describe("What to index: 'transcript' (captions, default), 'audio' (transcribe the audio), or 'video' (picture and sound)"),
+        on_missing_transcript: z.enum(["fail", "audio", "video"]).optional()
+          .describe("When mode is transcript and a video has no captions: 'fail' (default), or fall back to 'audio' / 'video'"),
+        languages: z.array(z.string()).optional().describe("Preferred caption languages in order, e.g. ['en', 'es']"),
+        custom_metadata: indexOptionFields.custom_metadata,
+        mask_pii: indexOptionFields.mask_pii,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -343,6 +471,10 @@ export function registerCaptainTools(server: McpServer): void {
       const urlList = Array.isArray(params.urls) ? params.urls : [params.urls];
       log(`Indexing ${urlList.length} YouTube video(s) into '${params.collection}'`);
       const body: Record<string, unknown> = urlList.length === 1 ? { url: urlList[0] } : { urls: urlList };
+      if (params.mode) body.mode = params.mode;
+      if (params.on_missing_transcript) body.on_missing_transcript = params.on_missing_transcript;
+      if (params.languages) body.languages = params.languages;
+      applyIndexOptions(body, params);
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/index/youtube`, { method: "POST", body });
       return jobStartedResponse(data.job_id, `${urlList.length} YouTube video(s)`);
     }
@@ -358,14 +490,16 @@ export function registerCaptainTools(server: McpServer): void {
         collection: z.string().describe("Collection name to index into"),
         text: z.string().describe("Text content to index"),
         filename: z.string().optional().describe("Optional filename label for the indexed text"),
-        processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' or 'basic' (default basic)"),
+        custom_metadata: indexOptionFields.custom_metadata,
+        mask_pii: indexOptionFields.mask_pii,
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       log(`Indexing text into '${params.collection}' (${params.text.length} chars)`);
-      const body: Record<string, unknown> = { content: params.text, processing_type: params.processing_type || "basic" };
+      const body: Record<string, unknown> = { content: params.text };
       if (params.filename) body.filename = params.filename;
+      applyIndexOptions(body, params);
       const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/index/text`, { method: "POST", body });
       return jobStartedResponse(data.job_id, "text content");
     }
@@ -395,6 +529,7 @@ export function registerCaptainTools(server: McpServer): void {
         skip_existing: z.boolean().optional().describe("Skip files already indexed (default true)"),
         overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
         transcription_language: z.string().optional().describe("AWS Transcribe language code for audio/video (e.g. 'en-US')"),
+        mask_pii: indexOptionFields.mask_pii,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -451,6 +586,7 @@ export function registerCaptainTools(server: McpServer): void {
       if (params.skip_existing !== undefined) form.append("skip_existing", String(params.skip_existing));
       if (params.overwrite_existing !== undefined) form.append("overwrite_existing", String(params.overwrite_existing));
       if (params.transcription_language) form.append("transcription_language", params.transcription_language);
+      if (params.mask_pii !== undefined) form.append("mask_pii", String(params.mask_pii));
 
       log(`Uploading ${count} file(s) into '${params.collection}'`);
       const data = await captainUploadFiles(
@@ -470,27 +606,40 @@ export function registerCaptainTools(server: McpServer): void {
       title: "Index from Amazon S3",
       description:
         "Index files from Amazon S3 into a Captain collection. Can index an entire bucket, a directory, or a single file. " +
-        "Requires AWS credentials with read access to the bucket.",
+        "Authenticate either with a cross-account IAM role (role_arn + external_id; recommended, no long-lived keys) " +
+        "or with an access key pair.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
         bucket_name: z.string().describe("S3 bucket name"),
-        aws_access_key_id: z.string().describe("AWS access key ID"),
-        aws_secret_access_key: z.string().describe("AWS secret access key"),
+        role_arn: z.string().optional().describe("Assume-role: ARN of the IAM role in your account for Captain to assume"),
+        external_id: z.string().optional().describe("Assume-role: the Captain-issued external ID your role's trust policy requires"),
+        aws_access_key_id: z.string().optional().describe("Access-key auth: AWS access key ID"),
+        aws_secret_access_key: z.string().optional().describe("Access-key auth: AWS secret access key"),
         bucket_region: z.string().optional().describe("AWS region (default: us-east-1)"),
         directory_path: z.string().optional().describe("Directory path within the bucket (omit for full bucket)"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       const body: Record<string, unknown> = {
         bucket_name: params.bucket_name,
-        aws_access_key_id: params.aws_access_key_id,
-        aws_secret_access_key: params.aws_secret_access_key,
         bucket_region: params.bucket_region || "us-east-1",
         processing_type: params.processing_type || "advanced",
       };
+      if (params.role_arn || params.external_id) {
+        if (!params.role_arn || !params.external_id) throw new Error("Assume-role auth requires both `role_arn` and `external_id`.");
+        body.auth = { type: "assume_role", role_arn: params.role_arn, external_id: params.external_id };
+      } else {
+        if (!params.aws_access_key_id || !params.aws_secret_access_key) {
+          throw new Error("Provide `role_arn` + `external_id` (assume-role) or `aws_access_key_id` + `aws_secret_access_key`.");
+        }
+        body.aws_access_key_id = params.aws_access_key_id;
+        body.aws_secret_access_key = params.aws_secret_access_key;
+      }
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.file_path) {
@@ -526,6 +675,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -535,6 +685,7 @@ export function registerCaptainTools(server: McpServer): void {
         service_account_json: params.service_account_json,
         processing_type: params.processing_type || "advanced",
       };
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.file_path) {
@@ -571,6 +722,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the container"),
         file_path: z.string().optional().describe("Single file path within the container"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -581,6 +733,7 @@ export function registerCaptainTools(server: McpServer): void {
         account_key: params.account_key,
         processing_type: params.processing_type || "advanced",
       };
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.file_path) {
@@ -615,10 +768,12 @@ export function registerCaptainTools(server: McpServer): void {
         r2_account_id: z.string().describe("Cloudflare account ID"),
         r2_access_key_id: z.string().describe("R2 access key ID"),
         r2_secret_access_key: z.string().describe("R2 secret access key"),
-        jurisdiction: z.string().optional().describe("R2 jurisdiction (default, eu, fedramp, us)"),
+        jurisdiction: z.enum(["default", "eu", "fedramp", "us"]).optional()
+          .describe("R2 jurisdiction the bucket lives in: 'default', 'eu', 'fedramp', or 'us' (US data residency)"),
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -635,6 +790,7 @@ export function registerCaptainTools(server: McpServer): void {
         processing_type: params.processing_type || "advanced",
       };
       if (params.jurisdiction && params.jurisdiction !== "default") body.jurisdiction = params.jurisdiction;
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.file_path) {
@@ -669,7 +825,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Dropbox folder to index recursively, e.g. '/Reports/2024' (omit for whole account)"),
         file_path: z.string().optional().describe("Single Dropbox file path, e.g. '/Reports/2024/q1.pdf'"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -678,7 +834,7 @@ export function registerCaptainTools(server: McpServer): void {
         dropbox_access_token: params.dropbox_access_token,
         processing_type: params.processing_type || "advanced",
       };
-      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.file_path) {
@@ -717,6 +873,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
         file_path: z.string().optional().describe("Single object key within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -743,6 +900,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
         file_path: z.string().optional().describe("Single object key within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -766,7 +924,7 @@ export function registerCaptainTools(server: McpServer): void {
         folder_id: z.string().optional().describe("Drive folder id to index recursively (omit for whole Drive)"),
         file_id: z.string().optional().describe("Single Drive file id"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -776,7 +934,7 @@ export function registerCaptainTools(server: McpServer): void {
         subject_email: params.subject_email,
         processing_type: params.processing_type || "advanced",
       };
-      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.file_id) {
@@ -815,7 +973,7 @@ export function registerCaptainTools(server: McpServer): void {
         folder_id: z.string().optional().describe("Folder id to index recursively"),
         item_id: z.string().optional().describe("Single item (file) id"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -828,7 +986,7 @@ export function registerCaptainTools(server: McpServer): void {
         processing_type: params.processing_type || "advanced",
       };
       if (params.drive_id) body.drive_id = params.drive_id;
-      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.item_id) {
@@ -866,7 +1024,7 @@ export function registerCaptainTools(server: McpServer): void {
         folder_id: z.string().optional().describe("Folder id to index recursively"),
         item_id: z.string().optional().describe("Single item (file) id"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        ...indexOptionFields,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -878,7 +1036,7 @@ export function registerCaptainTools(server: McpServer): void {
         user_email: params.user_email,
         processing_type: params.processing_type || "advanced",
       };
-      if (params.custom_metadata) body.custom_metadata = params.custom_metadata;
+      applyIndexOptions(body, params);
       let endpoint: string;
       let source: string;
       if (params.item_id) {
@@ -916,7 +1074,7 @@ async function indexS3Compatible(
     directory_path?: string;
     file_path?: string;
     processing_type?: "advanced" | "basic";
-  },
+  } & IndexOptions,
 ): Promise<ToolResult> {
   const body: Record<string, unknown> = {
     bucket_name: params.bucket_name,
@@ -926,6 +1084,7 @@ async function indexS3Compatible(
     region: params.region || "us-east-1",
     processing_type: params.processing_type || "advanced",
   };
+  applyIndexOptions(body, params);
   const base = `collections/${encodeURIComponent(params.collection)}/index/${provider}`;
   let endpoint: string;
   let source: string;
