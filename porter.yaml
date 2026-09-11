@@ -22,6 +22,7 @@ services:
       enabled: true
       httpPath: /health
     domains:
+      - name: mcp.captain.dev
       - name: mcp.runcaptain.com
     # Stateless Bearer-passthrough: no app-level Captain credentials. Callers
     # supply their own key per request via the Authorization header.
@@ -46,5 +47,6 @@ services:
         value: "https://auth.captain.dev/"
       - name: CAPTAIN_JWKS_URL
         value: "https://auth.captain.dev/.well-known/jwks.json"
-      - name: CAPTAIN_MCP_PUBLIC_URL
-        value: "https://mcp.runcaptain.com/mcp"
+      # Canonical first; every host listed is a registered Auth0 API audience.
+      - name: CAPTAIN_MCP_PUBLIC_URLS
+        value: "https://mcp.captain.dev/mcp,https://mcp.runcaptain.com/mcp"

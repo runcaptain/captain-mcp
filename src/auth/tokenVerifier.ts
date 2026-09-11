@@ -15,7 +15,14 @@ import { InvalidTokenError, ServerError } from "@modelcontextprotocol/sdk/server
 export interface VerifierSettings {
   jwksUrl: string;
   issuer: string;
-  audience: string;
+  /** Every audience this server answers to (one per public host); the token must carry one of them. */
+  audiences: string[];
+}
+
+/** The accepted audience the token actually carries (jose guarantees one matches). */
+function resourceOf(aud: unknown, accepted: string[]): string {
+  const list = Array.isArray(aud) ? aud : [aud];
+  return accepted.find((a) => list.includes(a)) ?? accepted[0];
 }
 
 export class CaptainTokenVerifier {
@@ -30,7 +37,7 @@ export class CaptainTokenVerifier {
     try {
       ({ payload } = await jwtVerify(token, this.jwks, {
         issuer: this.settings.issuer,
-        audience: this.settings.audience,
+        audience: this.settings.audiences,
         algorithms: ["RS256"],
         typ: "at+jwt",
         clockTolerance: 60,
@@ -62,7 +69,7 @@ export class CaptainTokenVerifier {
       clientId: typeof payload.azp === "string" ? payload.azp : "unknown",
       scopes,
       expiresAt: payload.exp,
-      resource: new URL(this.settings.audience),
+      resource: new URL(resourceOf(payload.aud, this.settings.audiences)),
       extra: {
         org: payload.org,
         envs: payload.envs,
