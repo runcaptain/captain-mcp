@@ -75,7 +75,7 @@ export function registerCaptainTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name to search"),
         query: z.string().describe("Natural language search query"),
-        top_k: z.number().optional().describe("Number of results to return (default 10)"),
+        top_k: z.number().int().min(1).max(100).optional().describe("Number of results to return, 1-100 (default 10)"),
         rerank: z.union([z.boolean(), RerankOptionsSchema]).optional()
           .describe("Rerank results (default true; required for multimodal collections). Object form tunes model / candidate_limit."),
         metadata_filter: z.record(z.any()).optional()

@@ -67,6 +67,7 @@ function summarizeSync(s: any): string {
     `Collection: ${s.collection_name}`,
     `Source: ${s.storage_type}://${s.bucket}${s.prefix ? "/" + s.prefix : ""}`,
     `Status: ${s.status ?? "unknown"}${s.sync_state ? ` (${s.sync_state})` : ""}`,
+    `Environment: ${s.environment ?? "unknown"}`,
     `Auth: ${s.auth_method ?? "unknown"}`,
     `Deletion policy: ${s.deletion_policy ?? "mirror"}`,
   ];
