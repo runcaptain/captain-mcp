@@ -149,4 +149,56 @@ export function registerDocumentTools(server: McpServer): void {
       return json(data);
     },
   );
+
+  // ── captain_batch_document_metadata ─────────────────────────
+  // CAP-763 / CAP-764. mode and collection_name are REQUIRED with no defaults;
+  // the tool never switches merge<->replace or the collection on its own, and
+  // mixed / unknown outcomes are surfaced per item (the caller must see
+  // results[]). "replace" is added when CAP-741 ships; until then it is
+  // rejected by the schema rather than silently mapped to merge.
+  server.registerTool(
+    "captain_batch_document_metadata",
+    {
+      title: "Update document metadata in batches",
+      description:
+        "Apply custom_metadata to up to 100 documents in one request. mode=\"merge\" merges the supplied keys into " +
+        "each document (omitted keys are kept, a null value deletes its key). The response is HTTP 200 with one " +
+        "result per item, in input order, each `succeeded`, `failed`, or `unknown`; a failed item does not roll back " +
+        "the others. `unknown` means the write could not be confirmed: read the document back before retrying it. " +
+        "item_id only correlates results; it is not an idempotency key.",
+      inputSchema: {
+        collection_name: z.string().describe("Collection name (required, no default)"),
+        mode: z.enum(["merge"]).describe("Write mode (required, no default). \"merge\" keeps omitted keys."),
+        items: z
+          .array(
+            z.object({
+              item_id: z.string().min(1).describe("Unique within this request; echoed on the result"),
+              document_id: z.string().min(1).describe("Document id as returned by indexing or listing"),
+              metadata: z.record(z.any()).describe("Custom metadata for this document"),
+            }),
+          )
+          .min(1)
+          .max(100)
+          .describe("1 to 100 items"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Batch ${params.mode} of document metadata on ${params.items.length} item(s) in ${params.collection_name}`);
+      const data = await captainFetch(
+        config,
+        `collections/${enc(params.collection_name)}/documents/metadata/batch`,
+        { version: "v3", method: "PATCH", body: { items: params.items } },
+      );
+      // Never report overall success on a mixed or unknown batch: put the
+      // per-item tally first so a caller cannot miss it.
+      const results: Array<{ status?: string }> = Array.isArray((data as any)?.results) ? (data as any).results : [];
+      const tally = { succeeded: 0, failed: 0, unknown: 0 } as Record<string, number>;
+      for (const r of results) tally[r.status ?? "unknown"] = (tally[r.status ?? "unknown"] ?? 0) + 1;
+      const headline =
+        `${tally.succeeded} succeeded, ${tally.failed} failed, ${tally.unknown} unknown of ${results.length}` +
+        (tally.failed || tally.unknown ? " (check results[] item by item; unknown means unconfirmed, not failed)" : "");
+      return textResult(`${headline}\n\n${JSON.stringify(data, null, 2)}`);
+    },
+  );
 }
