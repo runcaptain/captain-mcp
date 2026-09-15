@@ -14,7 +14,7 @@ import { registerJobTools } from "./jobTools.js";
 
 export const VERSION = "0.7.0";
 /** Actual number of tools registered by buildServer() — verified against the registry. */
-export const TOOL_COUNT = 65;
+export const TOOL_COUNT = 67;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
