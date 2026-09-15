@@ -385,7 +385,9 @@ export function registerChunkTools(server: McpServer): void {
         "(boolean, or an object to tune model / candidate_limit). `include_relations` / `include_related_chunks` " +
         "hydrate graph neighbours so an answer split across a claim and its evidence table comes back together. " +
         "Every one of these is a request parameter, not a re-index — tune them against a question set with " +
-        "captain_eval. Prefer this over captain_search for filtered, boosted, or multimodal collections.",
+        "captain_eval. Prefer this over captain_search for filtered, boosted, or multimodal collections. " +
+        "The response includes timing.stages with measured processing offsets. Repeated stages carry " +
+        "segments for their actual intervals; preserve gaps and overlaps when displaying them.",
       inputSchema: {
         collection: z.string().describe("Collection name"),
         query: z.string().describe("Natural-language search query"),
