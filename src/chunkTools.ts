@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getConfig, captainFetch, textResult, type ToolResult } from "./captainClient.js";
+import { getConfig, captainFetch, textResult, batchResult, type ToolResult } from "./captainClient.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -347,6 +347,94 @@ export function registerChunkTools(server: McpServer): void {
       );
       return json(data);
     }
+  );
+
+  // ── captain_batch_chunk_metadata ────────────────────────────
+  // CAP-763 / CAP-742 / CAP-743. Same envelope and tally as the document tool.
+  server.registerTool(
+    "captain_batch_chunk_metadata",
+    {
+      title: "Update or overwrite chunk metadata in batches",
+      description:
+        "Apply custom metadata to up to 100 chunks in one request. mode=\"merge\" merges the supplied keys into " +
+        "each chunk (omitted keys are kept, a null value deletes its key); mode=\"overwrite\" replaces each chunk's " +
+        "whole metadata object (omitted keys are removed, {} clears it). A chunk that does not exist fails its item " +
+        "with 404 and nothing is written for it. The response is HTTP 200 with one result per item, in input order, " +
+        "each `succeeded`, `failed`, or `unknown`; a failed item does not roll back the others. `filterable: false` on " +
+        "a succeeded item means the value is stored but search filters may not match it yet. item_id only correlates " +
+        "results; it is not an idempotency key.",
+      inputSchema: {
+        collection_name: z.string().describe("Collection name (required, no default)"),
+        mode: z.enum(["merge", "overwrite"]).describe("Write mode (required, no default). \"merge\" keeps omitted keys; \"overwrite\" removes them."),
+        items: z
+          .array(
+            z.object({
+              item_id: z.string().min(1).describe("Unique within this request; echoed on the result"),
+              chunk_id: z.string().min(1).describe("Chunk id as returned by the chunk list or a query result"),
+              metadata: z.record(z.any()).describe("Custom metadata for this chunk"),
+            }),
+          )
+          .min(1)
+          .max(100)
+          .describe("1 to 100 items"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Batch ${params.mode} of chunk metadata on ${params.items.length} item(s) in ${params.collection_name}`);
+      const data = await captainFetch(
+        config,
+        `collections/${enc(params.collection_name)}/chunks/metadata/batch`,
+        { version: "v3", method: params.mode === "overwrite" ? "PUT" : "PATCH", body: { items: params.items } },
+      );
+      return batchResult(data);
+    },
+  );
+
+  // ── captain_batch_chunk_relations ───────────────────────────
+  // CAP-763 / CAP-744. An upsert keyed on (source, target, relation_type): the
+  // one place a batch endpoint deliberately differs from its single-item
+  // sibling, which always creates and can therefore produce duplicates.
+  server.registerTool(
+    "captain_batch_chunk_relations",
+    {
+      title: "Create or update chunk relations in batches",
+      description:
+        "Create or update up to 100 chunk relations in one request. A relation is identified by its source chunk, " +
+        "target chunk and relation_type. No existing match: one is created (item 201). Exactly one: it keeps its " +
+        "relation_id and its whole metadata object is replaced by the item's metadata (item 200; omitted keys are " +
+        "removed, {} clears it). More than one: nothing changes and the item fails with 409 " +
+        "relation_identity_ambiguous; delete the extras with captain_delete_chunk_relation and retry. A missing " +
+        "source or target chunk fails the item with 404; a chunk cannot relate to itself. The response is HTTP 200 " +
+        "with one result per item, in input order; a failed item does not roll back the others.",
+      inputSchema: {
+        collection_name: z.string().describe("Collection name (required, no default)"),
+        items: z
+          .array(
+            z.object({
+              item_id: z.string().min(1).describe("Unique within this request; echoed on the result"),
+              source_chunk_id: z.string().min(1).describe("Chunk id where the relation starts"),
+              target_chunk_id: z.string().min(1).describe("Chunk id where the relation points; must differ from the source"),
+              relation_type: z.string().min(1).max(255).describe("Relation label; part of the relation's identity"),
+              metadata: z.record(z.any()).describe("Relation metadata (required). On update it replaces the whole object"),
+              target_document_id: z.string().optional().describe("Optional; when given, the document must contain the target chunk"),
+            }),
+          )
+          .min(1)
+          .max(100)
+          .describe("1 to 100 items"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Batch upsert of ${params.items.length} chunk relation(s) in ${params.collection_name}`);
+      const data = await captainFetch(
+        config,
+        `collections/${enc(params.collection_name)}/relations/batch`,
+        { version: "v3", method: "PUT", body: { items: params.items } },
+      );
+      return batchResult(data);
+    },
   );
 
   // ── captain_delete_chunk_relation ───────────────────────────

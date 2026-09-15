@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getConfig, captainFetch, textResult, type ToolResult } from "./captainClient.js";
+import { getConfig, captainFetch, textResult, batchResult, type ToolResult } from "./captainClient.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 const enc = encodeURIComponent;
@@ -154,21 +154,23 @@ export function registerDocumentTools(server: McpServer): void {
   // CAP-763 / CAP-764. mode and collection_name are REQUIRED with no defaults;
   // the tool never switches merge<->replace or the collection on its own, and
   // mixed / unknown outcomes are surfaced per item (the caller must see
-  // results[]). "replace" is added when CAP-741 ships; until then it is
-  // rejected by the schema rather than silently mapped to merge.
+  // results[]). mode "overwrite" is the PUT endpoint (CAP-741): omitted keys
+  // are removed and {} clears the document.
   server.registerTool(
     "captain_batch_document_metadata",
     {
-      title: "Update document metadata in batches",
+      title: "Update or overwrite document metadata in batches",
       description:
         "Apply custom_metadata to up to 100 documents in one request. mode=\"merge\" merges the supplied keys into " +
-        "each document (omitted keys are kept, a null value deletes its key). The response is HTTP 200 with one " +
+        "each document (omitted keys are kept, a null value deletes its key); mode=\"overwrite\" replaces each " +
+        "document's whole custom_metadata object (omitted keys are removed, {} clears it; consider copying the " +
+        "collection first). The response is HTTP 200 with one " +
         "result per item, in input order, each `succeeded`, `failed`, or `unknown`; a failed item does not roll back " +
         "the others. `unknown` means the write could not be confirmed: read the document back before retrying it. " +
         "item_id only correlates results; it is not an idempotency key.",
       inputSchema: {
         collection_name: z.string().describe("Collection name (required, no default)"),
-        mode: z.enum(["merge"]).describe("Write mode (required, no default). \"merge\" keeps omitted keys."),
+        mode: z.enum(["merge", "overwrite"]).describe("Write mode (required, no default). \"merge\" keeps omitted keys; \"overwrite\" removes them."),
         items: z
           .array(
             z.object({
@@ -188,17 +190,9 @@ export function registerDocumentTools(server: McpServer): void {
       const data = await captainFetch(
         config,
         `collections/${enc(params.collection_name)}/documents/metadata/batch`,
-        { version: "v3", method: "PATCH", body: { items: params.items } },
+        { version: "v3", method: params.mode === "overwrite" ? "PUT" : "PATCH", body: { items: params.items } },
       );
-      // Never report overall success on a mixed or unknown batch: put the
-      // per-item tally first so a caller cannot miss it.
-      const results: Array<{ status?: string }> = Array.isArray((data as any)?.results) ? (data as any).results : [];
-      const tally = { succeeded: 0, failed: 0, unknown: 0 } as Record<string, number>;
-      for (const r of results) tally[r.status ?? "unknown"] = (tally[r.status ?? "unknown"] ?? 0) + 1;
-      const headline =
-        `${tally.succeeded} succeeded, ${tally.failed} failed, ${tally.unknown} unknown of ${results.length}` +
-        (tally.failed || tally.unknown ? " (check results[] item by item; unknown means unconfirmed, not failed)" : "");
-      return textResult(`${headline}\n\n${JSON.stringify(data, null, 2)}`);
+      return batchResult(data);
     },
   );
 }

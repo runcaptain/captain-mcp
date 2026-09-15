@@ -141,3 +141,17 @@ export function jobStartedResponse(jobId: string, source: string): ToolResult {
     `Files are being processed in the background. Search results will be available once indexing completes.`
   );
 }
+
+/**
+ * Render a CAP-763 batch response. Never reports overall success on a mixed or
+ * unknown batch: the per-item tally comes first so a caller cannot miss it.
+ */
+export function batchResult(data: unknown): ToolResult {
+  const results: Array<{ status?: string }> = Array.isArray((data as any)?.results) ? (data as any).results : [];
+  const tally: Record<string, number> = { succeeded: 0, failed: 0, unknown: 0 };
+  for (const r of results) tally[r.status ?? "unknown"] = (tally[r.status ?? "unknown"] ?? 0) + 1;
+  const headline =
+    `${tally.succeeded} succeeded, ${tally.failed} failed, ${tally.unknown} unknown of ${results.length}` +
+    (tally.failed || tally.unknown ? " (check results[] item by item; unknown means unconfirmed, not failed)" : "");
+  return textResult(`${headline}\n\n${JSON.stringify(data, null, 2)}`);
+}
