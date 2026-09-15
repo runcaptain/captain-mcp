@@ -10,7 +10,7 @@ Exposes 19 tools:
 - `captain_search` (v2: metadata filter, semantic ratio, rerank options), `captain_list_collections`, `captain_create_collection` (description, metadata), `captain_delete_collection`
 - `captain_copy_collection`: clone a collection (vectors branched, no indexing credits)
 - `captain_change_environment`: move a collection between development, staging, and production. API keys are environment-scoped: `cap_dev_` keys see development, `cap_prod_` keys see production, and `cap_stage_` keys see staging. A moved collection disappears from keys of the old environment, and attached syncs do not follow automatically.
-- `captain_list_documents` (filter by custom metadata), `captain_get_document`, `captain_get_document_page`, `captain_create_asset_urls` (viewable URLs for figure regions), `captain_set_document_metadata`, `captain_update_document_metadata`, `captain_delete_document`, `captain_wipe_documents`
+- `captain_list_documents` (filter by custom metadata), `captain_get_document`, `captain_get_document_page`, `captain_create_asset_urls` (viewable URLs for figure regions), `captain_set_document_metadata`, `captain_update_document_metadata`, `captain_batch_document_metadata` (up to 100 documents per request), `captain_delete_document`, `captain_wipe_documents`
 - `captain_list_jobs`, `captain_job_status` (per-file results, credits billed, PII report pointer), `captain_cancel_job`, `captain_rollback_job`, `captain_get_pii_report`, `captain_delete_pii_report`
 - `captain_validate_parsing_script`: check a JavaScript parsing script in the sandbox before passing it as `parsing_script` to an index tool
 - `captain_index_url`, `captain_index_youtube` (transcript / audio / video mode), `captain_index_text`, `captain_index_file`
@@ -42,7 +42,7 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, and `captain_eval` — 64 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, and `captain_eval` — 65 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.
