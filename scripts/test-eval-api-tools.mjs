@@ -11,10 +11,15 @@ function handlers() {
 const call = (map, name, args) => runWithConfig({ apiKey: 'synthetic' }, () => map.get(name).handler(args));
 const parse = (r) => JSON.parse(r.content[0].text);
 
-test('registers the three Evaluation API tools with their titles', () => {
+test('registers the Evaluation API tools with their titles', () => {
   const map = handlers();
-  assert.deepEqual([...map.keys()], ['captain_create_eval_upload', 'captain_run_eval', 'captain_get_eval_results']);
+  assert.deepEqual(
+    [...map.keys()],
+    ['captain_create_eval_upload', 'captain_run_eval', 'captain_list_evals', 'captain_get_eval_results'],
+    'the four steps of the Evaluation API: upload, queue, find, read',
+  );
   assert.equal(map.get('captain_run_eval').definition.title, 'Run Evaluation');
+  assert.equal(map.get('captain_list_evals').definition.title, 'List Evaluations');
 });
 
 test('buildEvalConfig is the v3 query body minus query, plus name; include_* fold into include', () => {

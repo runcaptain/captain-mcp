@@ -158,4 +158,110 @@ export function registerQueryHistoryTools(server: McpServer): void {
       return textResult(lines.join("\n"));
     },
   );
+
+  // ── captain_get_query_latency ───────────────────────────────
+  server.registerTool(
+    "captain_get_query_latency",
+    {
+      title: "Query latency percentiles and distribution",
+      description:
+        "Summarise query latency over a window: exact p50/p95/p99, a histogram with explicit bin edges, and the same " +
+        "bins per collection so their shapes can be compared. This is the aggregate counterpart to captain_list_queries, " +
+        "which returns individual records a page at a time — use this when the question is 'how fast are queries', not " +
+        "'which queries ran'. Scoped to the environment of the API key in use.\n\n" +
+        "Two numbers are reported separately on purpose: `measured` queries have a recorded processing time, and " +
+        "`missing` ones do not and are left out of the percentiles rather than counted as zero milliseconds. `coverage` " +
+        "says how much of the population recorded each filterable setting, because older queries predate some of them " +
+        "and answer 'unknown'. Windows are capped at 90 days, and the metric covers completed, non-evaluation queries.",
+      inputSchema: {
+        from: z.string().describe("Window start, inclusive. ISO-8601 date or timestamp (e.g. 2026-09-01), read as UTC without an offset"),
+        to: z.string().describe("Window end, exclusive"),
+        collection: z.string().optional().describe("Only queries against this collection"),
+        api_version: z.enum(["v3", "v2", "unknown"]).optional().describe("unknown covers queries that recorded no version"),
+        rerank: z
+          .enum(["on", "off", "unknown"])
+          .optional()
+          .describe("The recorded rerank REQUEST setting, not whether reranking actually ran; unknown means the query did not record it"),
+        search_mode: z
+          .enum(["keyword", "semantic", "hybrid", "unknown"])
+          .optional()
+          .describe("Derived from the recorded semantic ratio; unknown means it was not recorded"),
+        has_filter: z
+          .enum(["true", "false", "unknown"])
+          .optional()
+          .describe("Whether the request carried a metadata filter; unknown means it was not recorded"),
+        bins: z.number().int().min(4).max(64).optional().describe("Histogram resolution (default 16); edges are returned explicitly"),
+        refresh: z.boolean().optional().describe("Recompute instead of serving a briefly cached result"),
+        slowest: z.boolean().optional().describe("Also list the slowest queries in the window, with ids and durations"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const qs = new URLSearchParams({ from: params.from, to: params.to });
+      if (params.collection) qs.set("collection", params.collection);
+      if (params.api_version) qs.set("api_version", params.api_version);
+      if (params.rerank) qs.set("rerank", params.rerank);
+      if (params.search_mode) qs.set("search_mode", params.search_mode);
+      if (params.has_filter) qs.set("has_filter", params.has_filter);
+      if (params.bins != null) qs.set("bins", String(params.bins));
+      if (params.refresh) qs.set("refresh", "true");
+
+      const data = await captainFetch(config, `queries/latency?${qs.toString()}`);
+      const counts = data.counts || {};
+      const pct = data.percentiles || {};
+      const ms = (value: any) => (value == null ? "-" : `${Number(value).toLocaleString()} ms`);
+
+      const lines = [
+        `${data.metric ?? "query_processing_time"} over ${data.window?.from ?? params.from} to ${data.window?.to ?? params.to} (end exclusive)`,
+        `Population: ${data.population ?? "completed, non-evaluation queries"}`,
+        `Matching ${Number(counts.matching ?? 0).toLocaleString()}  measured ${Number(counts.measured ?? 0).toLocaleString()}  no recorded latency ${Number(counts.missing ?? 0).toLocaleString()}`,
+        `p50 ${ms(pct.p50)}   p95 ${ms(pct.p95)}   p99 ${ms(pct.p99)}   (${data.percentile_method ?? "exact"})`,
+      ];
+
+      if (data.completeness && data.completeness.complete === false) {
+        lines.push(`Still arriving: this window reaches into the ingestion lag (data reaches ${data.completeness.watermark ?? "an earlier point"}).`);
+      }
+
+      const edges: number[] = data.histogram?.edges || [];
+      const binCounts: number[] = data.histogram?.counts || [];
+      if (binCounts.length) {
+        lines.push("", "Distribution:");
+        binCounts.forEach((count, index) => {
+          if (!count) return;
+          lines.push(`  ${edges[index]?.toLocaleString() ?? "?"}-${edges[index + 1]?.toLocaleString() ?? "?"} ms: ${count.toLocaleString()}`);
+        });
+      }
+
+      const series: any[] = data.collections || [];
+      if (series.length) {
+        lines.push("", "By collection:");
+        for (const entry of series) {
+          const label = entry.is_other ? `${entry.collection_name} (the remaining collections, grouped)` : entry.collection_name;
+          const percentiles = entry.p50 == null ? "percentiles not available for a grouped row" : `p50 ${ms(entry.p50)}  p95 ${ms(entry.p95)}  p99 ${ms(entry.p99)}`;
+          lines.push(`  ${label}: ${Number(entry.count ?? 0).toLocaleString()} queries  ${percentiles}`);
+        }
+      }
+
+      const coverage: Record<string, number> = data.coverage || {};
+      const thin = Object.entries(coverage).filter(([, ratio]) => ratio < 0.95);
+      if (thin.length) {
+        lines.push("", "Partially recorded settings (the rest answer 'unknown'):");
+        for (const [name, ratio] of thin) lines.push(`  ${name}: recorded on ${Math.round(ratio * 100)}% of matching queries`);
+      }
+
+      if (params.slowest) {
+        const slowQs = new URLSearchParams({ from: params.from, to: params.to, limit: "5" });
+        if (params.collection) slowQs.set("collection", params.collection);
+        const slow = await captainFetch(config, `queries/latency/slowest?${slowQs.toString()}`);
+        const rows: any[] = slow.queries || [];
+        lines.push("", rows.length ? "Slowest queries (open with captain_get_query):" : "Slowest queries: none measured.");
+        for (const row of rows) {
+          lines.push(`  ${ms(row.duration_ms)}  ${row.collection_name ?? "-"}  ${row.request_id}`);
+        }
+      }
+
+      lines.push("", `Computed ${data.generated_at ?? "just now"}.`);
+      return textResult(lines.join("\n"));
+    },
+  );
 }

@@ -7,7 +7,7 @@ MCP server for [Captain](https://runcaptain.com) — multimodal RAG search and p
 Exposes 19 tools:
 
 **Core search & collection management (17):**
-- `captain_search` (v2: metadata filter, semantic ratio, rerank options), `captain_list_collections`, `captain_create_collection` (description, metadata), `captain_delete_collection`
+- `captain_search` (metadata filter, semantic ratio, rerank options), `captain_list_collections`, `captain_create_collection` (description, metadata), `captain_delete_collection`
 - `captain_copy_collection`: clone a collection (vectors branched, no indexing credits)
 - `captain_change_environment`: move a collection between development, staging, and production. API keys are environment-scoped: `cap_dev_` keys see development, `cap_prod_` keys see production, and `cap_stage_` keys see staging. A moved collection disappears from keys of the old environment, and attached syncs do not follow automatically.
 - `captain_list_documents` (filter by custom metadata), `captain_get_document`, `captain_get_document_page`, `captain_create_asset_urls` (viewable URLs for figure regions), `captain_set_document_metadata`, `captain_update_document_metadata`, `captain_batch_document_metadata` (merge or overwrite, up to 100 documents per request), `captain_delete_document`, `captain_wipe_documents`
@@ -34,6 +34,8 @@ Exposes 19 tools:
 **Query history (2):**
 - `captain_list_queries` — the queries your keys and agents have run, newest first, scoped to the key's environment; filter by collection, status, and time window, page by cursor, and opt in to `include` (results, request, response) to get each query's retrieved chunks and exact bodies per row.
 - `captain_get_query` — one stored query by `query_id` or by the `request_id` a query response returns: summary, exact request body, normalised results, and optionally the exact response body.
+- `captain_list_evals` — the evaluations in this environment, newest first, with status, progress and per-configuration scorecards. Finds an eval_id you did not keep and shows whether anything is still running before you queue more.
+- `captain_get_query_latency` — latency percentiles and a histogram over a window, with the same bins per collection. The aggregate counterpart to `captain_list_queries`: it answers how fast queries are, not which ones ran. Queries with no recorded latency are reported separately rather than counted as zero, and partially recorded filters report their coverage.
 
 **Retrieval evaluation (4):**
 - `captain_eval` — run a question set against one or more v3 query configurations and score retrieval: recall@1/3/10, MRR, nDCG@10 (multi-hop), latency p50/p95, and a 0-100 composite with a letter grade and a plain-English diagnosis of the weakest component. Configurations are compared as a **paired** test on the same questions (McNemar plus the paired difference's 95% interval), so the output says whether a gain is real rather than just bigger. With no `configs` it runs the standard ladder (baseline → rerank → deeper candidate pool → drop layout noise) and recommends a winner.
@@ -45,7 +47,7 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval` and the Evaluation API — 70 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval` and the Evaluation API — 72 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.

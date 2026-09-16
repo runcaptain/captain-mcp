@@ -84,19 +84,28 @@ export function registerLiveSearchTools(server: McpServer): void {
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
+      // v3: the v2 query surface is no longer supported. v3 needs no
+      // `inference` field, and calls the result cap `limit`.
       const body = {
         query: params.query,
-        inference: false,
-        top_k: params.top_k ?? 5,
+        limit: params.top_k ?? 5,
         rerank: true,
       };
-      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/query`, { method: "POST", body });
+      const data = await captainFetch(
+        config,
+        `collections/${encodeURIComponent(params.collection)}/query`,
+        { version: "v3", method: "POST", body },
+      );
       const results = data.search_results || data.results || [];
       if (results.length === 0) return textResult(`No notes found in '${params.collection}' for: ${params.query}`);
 
       const formatted = results
         .map((r: any, i: number) => {
-          const source = r.filename || r.document_id || "Unknown";
+          // v3 nests the source under `document`. This matters twice here:
+          // the label, and the date below, which is parsed OUT of the
+          // filename — so losing attribution also lost every note's date.
+          const doc = r.document ?? {};
+          const source = r.filename || doc.filename || r.document_id || doc.id || "Unknown";
           const score = r.score?.toFixed(3) ?? "N/A";
           const content = r.content || r.text || r.chunk || "";
           const dateMatch = typeof source === "string" ? source.match(/note-(\d{4}-\d{2}-\d{2})/) : null;
