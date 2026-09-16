@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { registerEvalApiTools, buildEvalConfig, toNdjson } from '../dist/evalApiTools.js';
+import { registerEvalApiTools, buildEvalConfig, toNdjson, deriveIdempotencyKey } from '../dist/evalApiTools.js';
 import { runWithConfig } from '../dist/captainClient.js';
 
 function handlers() {
@@ -20,7 +20,7 @@ test('registers the three Evaluation API tools with their titles', () => {
 test('buildEvalConfig is the v3 query body minus query, plus name; include_* fold into include', () => {
   const cfg = buildEvalConfig({ name: 'deep', limit: 5, rerank: { enabled: true, candidate_limit: 40 }, include_relations: true });
   assert.deepEqual(cfg, { name: 'deep', limit: 5, rerank: { enabled: true, candidate_limit: 40 }, include: { relations: true } });
-  assert.deepEqual(buildEvalConfig({ name: 'baseline' }), { name: 'baseline', limit: 10 });
+  assert.deepEqual(buildEvalConfig({ name: 'baseline' }), { name: 'baseline' }, 'an omitted limit stays omitted: the API records sent fields as caller-explicit');
 });
 
 test('create_eval_upload serialises NDJSON, mints with the exact byte size, PUTs with the exact length', async (t) => {
@@ -71,9 +71,11 @@ test('run_eval sends Idempotency-Key, unique config names, and returns the key i
   });
   const out = parse(await call(map, 'captain_run_eval', { collection: 'c', upload_id: 'evu_1', configs: [{ name: 'baseline' }, { name: 'rerank', rerank: true }] }));
   assert.equal(out.eval_id, 'eval_1');
-  assert.match(out.idempotency_key, /^mcp-/);
+  assert.match(out.idempotency_key, /^mcp-[0-9a-f]{32}$/);
   assert.equal(sentKey, out.idempotency_key);
-  assert.deepEqual(sentBody, { upload_id: 'evu_1', configs: [{ name: 'baseline', limit: 10 }, { name: 'rerank', limit: 10, rerank: true }] });
+  assert.equal(out.idempotency_key, deriveIdempotencyKey('c', 'evu_1', [{ name: 'baseline' }, { name: 'rerank', rerank: true }]), 'derived from the arguments, so a transport retry replays the same eval');
+  assert.notEqual(out.idempotency_key, deriveIdempotencyKey('c', 'evu_2', [{ name: 'baseline' }]));
+  assert.deepEqual(sentBody, { upload_id: 'evu_1', configs: [{ name: 'baseline' }, { name: 'rerank', rerank: true }] });
   assert.equal(out.preview.billable_units, 12);
   await assert.rejects(call(map, 'captain_run_eval', { collection: 'c', upload_id: 'evu_1', configs: [{ name: 'a' }, { name: 'a' }] }), /unique/);
   await call(map, 'captain_run_eval', { collection: 'c', upload_id: 'evu_1', configs: [{ name: 'a' }], idempotency_key: 'mine-1' });
@@ -110,5 +112,20 @@ test('get_eval_results compacts items, pages, and fetches bounded answers only f
   assert.ok(urls[1].endsWith('/v3/evals/eval_1/answers/a/baseline'));
   assert.equal(out.answers.a.baseline.results[0].document_id, 'd1');
   assert.equal(out.answers.a.baseline.results[0].text.length, 200);
+  assert.equal(out.answers_fetched, 1);
   assert.equal(out.answers_truncated, false);
+});
+
+test('answers_truncated is true only when eligible answers remained past the cap', async (t) => {
+  const map = handlers();
+  const mk = (n) => ({ eval_id: 'eval_2', status: 'completed', configs: [{ name: 'b' }], items: Array.from({ length: n }, (_, i) => ({ id: `c${i}`, status: 'scored', results: { b: { status: 'scored', hit: true, rank: 1 } } })) });
+  let ev = mk(20);
+  t.mock.method(globalThis, 'fetch', async (url) => String(url).includes('/answers/')
+    ? new Response(JSON.stringify({ request: {}, response: { results: [] } }), { status: 200 })
+    : new Response(JSON.stringify(ev), { status: 200 }));
+  let out = parse(await call(map, 'captain_get_eval_results', { eval_id: 'eval_2', include_answers: true }));
+  assert.equal(out.answers_fetched, 20); assert.equal(out.answers_truncated, false, 'exactly 20 eligible: complete');
+  ev = mk(21);
+  out = parse(await call(map, 'captain_get_eval_results', { eval_id: 'eval_2', include_answers: true }));
+  assert.equal(out.answers_fetched, 20); assert.equal(out.answers_truncated, true, '21 eligible: one remained');
 });

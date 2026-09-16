@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, textResult, type ToolResult } from "./captainClient.js";
 import { QueryV3ConfigSchema, buildQueryV3Body, type QueryV3Config } from "./chunkTools.js";
@@ -47,7 +47,16 @@ export function buildEvalConfig(cfg: EvalConfig): Record<string, unknown> {
   const { name, ...rest } = cfg;
   const body = buildQueryV3Body("", rest as QueryV3Config);
   delete body.query;
+  // buildQueryV3Body fills `limit` for the query route; the Evaluation API
+  // records every field the caller sent as caller-explicit (explicit_fields),
+  // so an omitted limit must stay omitted and follow the server default.
+  if (rest.limit === undefined) delete body.limit;
   return { name, ...body };
+}
+
+export function deriveIdempotencyKey(collection: string, uploadId: string, configs: unknown): string {
+  const digest = createHash("sha256").update(JSON.stringify([collection, uploadId, configs])).digest("hex");
+  return `mcp-${digest.slice(0, 32)}`;
 }
 
 export function toNdjson(cases: z.infer<typeof CaseSchema>[]): string {
@@ -163,14 +172,18 @@ export function registerEvalApiTools(server: McpServer): void {
         configs: z.array(EvalConfigSchema).min(1).max(MAX_CONFIGS)
           .describe(`1-${MAX_CONFIGS} named configurations. Each is a v3 query configuration (limit, filter, rerank, boost, semantic_ratio, exclude_chunk_types, max_chunks_per_document, include_*) plus a unique name. {name: "baseline"} = server defaults.`),
         idempotency_key: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional()
-          .describe("Replay key. Generated when omitted; returned either way."),
+          .describe("Replay key. When omitted it is derived from the collection, upload_id and configs, so a retry with the same arguments replays the same eval; returned either way."),
       },
     },
     async ({ collection, upload_id, configs, idempotency_key }) => {
       const config = getConfig();
       const names = configs.map((c) => c.name);
       if (new Set(names).size !== names.length) throw new Error("Configuration names must be unique.");
-      const key = idempotency_key ?? `mcp-${randomUUID()}`;
+      // Derived from the arguments, never random: a transport retry with the
+      // same collection, upload and configs replays the same eval instead of
+      // starting (and billing) a second one. The upload is single-use, so the
+      // key is naturally unique per case set.
+      const key = idempotency_key ?? deriveIdempotencyKey(collection, upload_id, configs.map(buildEvalConfig));
       const created = await captainFetch(config, `collections/${enc(collection)}/evals`, {
         method: "POST",
         version: "v3",
@@ -230,20 +243,20 @@ export function registerEvalApiTools(server: McpServer): void {
         next_cursor: ev.items_page?.next_cursor ?? ev.next_cursor ?? null,
       };
       if (include_answers) {
-        const answers: Record<string, Record<string, unknown>> = {};
-        let fetched = 0;
+        const eligible: Array<[string, string]> = [];
         for (const item of items) {
           for (const [name, r] of Object.entries<any>(item.results)) {
-            if (fetched >= MAX_ANSWERS) break;
-            if (r.status !== "scored") continue;
-            const a = await captainFetch(config, `evals/${enc(eval_id)}/answers/${enc(String(item.id))}/${enc(name)}`, { version: "v3" });
-            (answers[String(item.id)] ??= {})[name] = compactAnswer(a);
-            fetched++;
+            if (r.status === "scored") eligible.push([String(item.id), name]);
           }
-          if (fetched >= MAX_ANSWERS) break;
+        }
+        const answers: Record<string, Record<string, unknown>> = {};
+        for (const [caseId, name] of eligible.slice(0, MAX_ANSWERS)) {
+          const a = await captainFetch(config, `evals/${enc(eval_id)}/answers/${enc(caseId)}/${enc(name)}`, { version: "v3" });
+          (answers[caseId] ??= {})[name] = compactAnswer(a);
         }
         out.answers = answers;
-        out.answers_truncated = fetched >= MAX_ANSWERS;
+        out.answers_fetched = Math.min(eligible.length, MAX_ANSWERS);
+        out.answers_truncated = eligible.length > MAX_ANSWERS;
       }
       return json(out);
     },
