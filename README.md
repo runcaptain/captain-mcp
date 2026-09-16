@@ -7,7 +7,7 @@ MCP server for [Captain](https://runcaptain.com) — multimodal RAG search and p
 Exposes 19 tools:
 
 **Core search & collection management (17):**
-- `captain_search` (v2: metadata filter, semantic ratio, rerank options), `captain_list_collections`, `captain_create_collection` (description, metadata), `captain_delete_collection`
+- `captain_search` (metadata filter, semantic ratio, rerank options), `captain_list_collections`, `captain_create_collection` (description, metadata), `captain_delete_collection`
 - `captain_copy_collection`: clone a collection (vectors branched, no indexing credits)
 - `captain_change_environment`: move a collection between development, staging, and production. API keys are environment-scoped: `cap_dev_` keys see development, `cap_prod_` keys see production, and `cap_stage_` keys see staging. A moved collection disappears from keys of the old environment, and attached syncs do not follow automatically.
 - `captain_list_documents` (filter by custom metadata), `captain_get_document`, `captain_get_document_page`, `captain_create_asset_urls` (viewable URLs for figure regions), `captain_set_document_metadata`, `captain_update_document_metadata`, `captain_batch_document_metadata` (merge or overwrite, up to 100 documents per request), `captain_delete_document`, `captain_wipe_documents`
