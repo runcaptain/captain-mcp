@@ -121,12 +121,18 @@ export function registerCaptainTools(server: McpServer): void {
       if (results.length === 0) return textResult(`No results found.${header ? `\n${header}` : ""}`);
       const formatted = results
         .map((r: any, i: number) => {
-          const source = r.filename || r.uri || r.document_id || "Unknown";
+          // v3 nests the source under `document`; v2 had it flat. Reading
+          // only the flat keys printed "Unknown" for every v3 result and
+          // dropped document_id from the id line, which is the handle a
+          // caller needs for a follow-up fetch.
+          const doc = r.document ?? {};
+          const documentId = r.document_id ?? doc.id;
+          const source = r.filename || doc.filename || r.uri || doc.source?.uri || documentId || "Unknown";
           const score = r.score?.toFixed(3) ?? "N/A";
           const rr = r.rerank_score != null ? `, rerank: ${Number(r.rerank_score).toFixed(3)}` : "";
           const content = r.content || r.text || r.chunk || "";
           const modality = r.modality || "text";
-          const ids = [r.document_id ? `document_id: ${r.document_id}` : null, r.chunk_id ? `chunk_id: ${r.chunk_id}` : null]
+          const ids = [documentId ? `document_id: ${documentId}` : null, r.chunk_id ? `chunk_id: ${r.chunk_id}` : null]
             .filter(Boolean).join(", ");
           return `[${i + 1}] (${modality}, score: ${score}${rr}) ${source}${ids ? `\n${ids}` : ""}\n${content}`;
         })

@@ -101,7 +101,11 @@ export function registerLiveSearchTools(server: McpServer): void {
 
       const formatted = results
         .map((r: any, i: number) => {
-          const source = r.filename || r.document_id || "Unknown";
+          // v3 nests the source under `document`. This matters twice here:
+          // the label, and the date below, which is parsed OUT of the
+          // filename — so losing attribution also lost every note's date.
+          const doc = r.document ?? {};
+          const source = r.filename || doc.filename || r.document_id || doc.id || "Unknown";
           const score = r.score?.toFixed(3) ?? "N/A";
           const content = r.content || r.text || r.chunk || "";
           const dateMatch = typeof source === "string" ? source.match(/note-(\d{4}-\d{2}-\d{2})/) : null;
