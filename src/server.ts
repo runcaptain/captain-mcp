@@ -8,13 +8,14 @@ import { registerLiveSearchTools } from "./liveSearch.js";
 import { registerSyncTools } from "./syncTools.js";
 import { registerWizardTool } from "./wizard.js";
 import { registerEvalTools } from "./evalTools.js";
+import { registerEvalApiTools } from "./evalApiTools.js";
 import { registerQueryHistoryTools } from "./queryHistoryTools.js";
 import { registerDocumentTools } from "./documentTools.js";
 import { registerJobTools } from "./jobTools.js";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 /** Actual number of tools registered by buildServer() — verified against the registry. */
-export const TOOL_COUNT = 65;
+export const TOOL_COUNT = 68;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
@@ -63,6 +64,7 @@ export function buildServer(): McpServer {
   registerSyncTools(server);
   registerWizardTool(server);
   registerEvalTools(server);
+  registerEvalApiTools(server);
   registerQueryHistoryTools(server);
   registerDocumentTools(server);
   registerJobTools(server);
