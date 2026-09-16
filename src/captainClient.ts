@@ -77,13 +77,13 @@ function captainHeaders(config: CaptainConfig, extra: Record<string, string> = {
 export async function captainFetch(
   config: CaptainConfig,
   path: string,
-  options: { method?: string; body?: unknown; version?: ApiVersion } = {}
+  options: { method?: string; body?: unknown; version?: ApiVersion; headers?: Record<string, string> } = {}
 ): Promise<any> {
   const version = options.version || "v2";
   const url = buildUrl(config, version, path);
   const response = await fetch(url, {
     method: options.method || "GET",
-    headers: captainHeaders(config, { "Content-Type": "application/json" }),
+    headers: captainHeaders(config, { "Content-Type": "application/json", ...(options.headers ?? {}) }),
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
