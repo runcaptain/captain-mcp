@@ -34,6 +34,7 @@ Exposes 19 tools:
 **Query history (2):**
 - `captain_list_queries` — the queries your keys and agents have run, newest first, scoped to the key's environment; filter by collection, status, and time window, page by cursor, and opt in to `include` (results, request, response) to get each query's retrieved chunks and exact bodies per row.
 - `captain_get_query` — one stored query by `query_id` or by the `request_id` a query response returns: summary, exact request body, normalised results, and optionally the exact response body.
+- `captain_list_evals` — the evaluations in this environment, newest first, with status, progress and per-configuration scorecards. Finds an eval_id you did not keep and shows whether anything is still running before you queue more.
 - `captain_get_query_latency` — latency percentiles and a histogram over a window, with the same bins per collection. The aggregate counterpart to `captain_list_queries`: it answers how fast queries are, not which ones ran. Queries with no recorded latency are reported separately rather than counted as zero, and partially recorded filters report their coverage.
 
 **Retrieval evaluation (4):**
@@ -46,7 +47,7 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval` and the Evaluation API — 71 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval` and the Evaluation API — 72 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.

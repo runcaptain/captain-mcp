@@ -202,6 +202,63 @@ export function registerEvalApiTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "captain_list_evals",
+    {
+      title: "List Evaluations",
+      description:
+        "List the evaluations in this environment, newest first, each with its status, progress and " +
+        "per-configuration scorecards. Use it to find an eval_id you did not keep, to compare recent runs " +
+        "against the same collection, or to check whether anything is still running before queueing more. " +
+        "Per-case results and stored answers stay on captain_get_eval_results. Page with cursor until " +
+        "next_cursor is null; there is no total count.",
+      inputSchema: {
+        collection: z.string().optional().describe("Only evaluations against this collection."),
+        status: z.enum(["pending", "running", "completed", "completed_with_errors", "failed"]).optional()
+          .describe("Filter by status."),
+        limit: z.number().int().min(1).max(100).optional().describe("Rows per page (default 25, max 100)."),
+        cursor: z.string().optional().describe("Opaque cursor from a previous page's next_cursor."),
+      },
+    },
+    async ({ collection, status, limit, cursor }): Promise<ToolResult> => {
+      const config = getConfig();
+      const params = new URLSearchParams();
+      if (collection) params.set("collection", collection);
+      if (status) params.set("status", status);
+      if (limit !== undefined) params.set("limit", String(limit));
+      if (cursor) params.set("cursor", cursor);
+      const qs = params.toString();
+      const page = await captainFetch(config, `evals${qs ? `?${qs}` : ""}`, { version: "v3" });
+      const rows: any[] = page.evals || [];
+      if (rows.length === 0) {
+        return textResult(
+          collection || status
+            ? "No evaluations match that filter."
+            : "No evaluations yet. Queue one with captain_create_eval_upload then captain_run_eval.",
+        );
+      }
+      const lines = [`${rows.length} evaluation${rows.length === 1 ? "" : "s"}:`];
+      for (const row of rows) {
+        const progress = row.progress || {};
+        const best = Object.entries(row.scorecards || {})
+          .map(([name, card]: [string, any]) => ({ name, recall: card?.recall_at_1 }))
+          .filter(entry => typeof entry.recall === "number")
+          .sort((a, b) => b.recall - a.recall)[0];
+        lines.push(
+          `- ${row.eval_id}  ${row.status}  ${row.collection_name}  ` +
+          `${Number(row.cases ?? 0).toLocaleString()} cases x ${(row.config_names || []).length} configs` +
+          (TERMINAL.has(row.status)
+            ? best ? `  best recall@1 ${best.recall.toFixed(3)} (${best.name})` : "  no scores"
+            : `  ${progress.percent ?? 0}% complete`) +
+          (row.error_code ? `  ${row.error_code}` : ""),
+        );
+      }
+      if (page.next_cursor) lines.push("", `More: pass cursor ${page.next_cursor}`);
+      lines.push("", "Read one in full with captain_get_eval_results.");
+      return textResult(lines.join("\n"));
+    },
+  );
+
+  server.registerTool(
     "captain_get_eval_results",
     {
       title: "Get Evaluation Results",
