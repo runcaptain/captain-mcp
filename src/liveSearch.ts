@@ -84,13 +84,18 @@ export function registerLiveSearchTools(server: McpServer): void {
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
+      // v3: the v2 query surface is no longer supported. v3 needs no
+      // `inference` field, and calls the result cap `limit`.
       const body = {
         query: params.query,
-        inference: false,
-        top_k: params.top_k ?? 5,
+        limit: params.top_k ?? 5,
         rerank: true,
       };
-      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/query`, { method: "POST", body });
+      const data = await captainFetch(
+        config,
+        `collections/${encodeURIComponent(params.collection)}/query`,
+        { version: "v3", method: "POST", body },
+      );
       const results = data.search_results || data.results || [];
       if (results.length === 0) return textResult(`No notes found in '${params.collection}' for: ${params.query}`);
 

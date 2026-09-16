@@ -89,17 +89,30 @@ export function registerCaptainTools(server: McpServer): void {
     async (params): Promise<ToolResult> => {
       const config = getConfig();
       log(`Searching '${params.collection}' for: ${params.query}`);
+      // v3. The v2 query surface is no longer supported, and v3 needs no
+      // `inference` field: it has never produced a generated answer, so the
+      // flag this tool used to send was already meaningless there.
+      //
+      // v3 names two of these differently: `limit` rather than `top_k`, and
+      // `filter` rather than `metadata_filter`. The tool's own parameter
+      // names are unchanged so existing callers keep working.
       const body: Record<string, unknown> = {
         query: params.query,
-        inference: false,
-        top_k: params.top_k ?? 10,
+        limit: params.top_k ?? 10,
         rerank: params.rerank ?? true,
       };
-      if (params.metadata_filter !== undefined) body.metadata_filter = params.metadata_filter;
+      if (params.metadata_filter !== undefined) body.filter = params.metadata_filter;
       if (params.semantic_ratio !== undefined) body.semantic_ratio = params.semantic_ratio;
-      if (params.include_archived !== undefined) body.include_archived = params.include_archived;
-      if (params.include_bbox !== undefined) body.include_bbox = params.include_bbox;
-      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/query`, { method: "POST", body });
+      // v3 groups these under `include`.
+      const include: Record<string, boolean> = {};
+      if (params.include_archived !== undefined) include.archived = params.include_archived;
+      if (params.include_bbox !== undefined) include.regions = params.include_bbox;
+      if (Object.keys(include).length) body.include = include;
+      const data = await captainFetch(
+        config,
+        `collections/${encodeURIComponent(params.collection)}/query`,
+        { version: "v3", method: "POST", body },
+      );
       const results = data.search_results || data.results || [];
       const header = [
         data.query_id ? `query_id: ${data.query_id} (captain_get_query)` : null,
