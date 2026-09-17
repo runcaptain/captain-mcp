@@ -4,6 +4,7 @@ import { basename, extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult, type CaptainConfig } from "./captainClient.js";
 import { RerankOptionsSchema } from "./chunkTools.js";
+import { validateInlineFile, INLINE_BASE64_SOFT_LIMIT_BYTES } from "./inlineFileValidation.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -532,8 +533,11 @@ export function registerCaptainTools(server: McpServer): void {
       description:
         "Upload and index files into a Captain collection (multipart to POST /v2/collections/{c}/index/file). " +
         "Supports PDF, DOCX, XLSX, CSV, TXT, MD, JSON, YAML, images, audio, and video. Max 20 files, 100MB each. " +
-        "Provide files one of three ways: `urls` (Captain-reachable URLs the server fetches), `files` " +
-        "(inline base64 content), or `paths` (local filesystem paths — only when the server is running locally). " +
+        "Provide files one of three ways: `urls` (Captain-reachable URLs the server fetches), `paths` (local " +
+        "filesystem paths — only when the server is running locally; PREFERRED for local files), or `files` " +
+        "(inline base64). Inline base64 is only reliable for small files (well under 64 KB): a large base64 " +
+        "string emitted in a tool call arrives corrupted or truncated, and such files are rejected here with " +
+        "the byte offset of the damage rather than failing later in indexing. " +
         "For public web pages prefer captain_index_url; for cloud storage use the provider tools.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
@@ -567,9 +571,16 @@ export function registerCaptainTools(server: McpServer): void {
 
       // Inline base64 files (hosted-friendly)
       for (const f of params.files || []) {
-        const buf = Buffer.from(f.content_base64, "base64");
-        append(new Blob([buf]), f.name);
-        label.push(f.name);
+        // Strict decode + integrity check: a model-emitted base64 string that
+        // was corrupted or cut off must fail HERE with the cause, not a minute
+        // later inside the image handler with an opaque vendor error.
+        const buf = validateInlineFile(f.name, f.content_base64);
+        if (buf.length > INLINE_BASE64_SOFT_LIMIT_BYTES) {
+          label.push(`${f.name} (inline base64, ${buf.length.toLocaleString()} bytes; prefer \`paths\`/\`urls\` for files this size)`);
+        } else {
+          label.push(f.name);
+        }
+        append(new Blob([new Uint8Array(buf)]), f.name);
       }
       // URLs the server fetches (hosted-friendly)
       for (const u of params.urls || []) {
