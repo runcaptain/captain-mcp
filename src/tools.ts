@@ -460,6 +460,17 @@ export function registerCaptainTools(server: McpServer): void {
           lines.push(f);
         }
       }
+      const m = data.manifest;
+      if (m && typeof m === "object") {
+        lines.push(`Manifest: ${m.lines ?? 0} lines, ${m.accepted ?? 0} accepted, ${m.rejected ?? 0} rejected, ${m.unreachable ?? 0} unreachable`);
+        for (const r of Array.isArray(m.rejected_sample) ? m.rejected_sample : []) lines.push(`  - line ${r.line ?? "?"}: ${r.reason}`);
+        for (const r of Array.isArray(m.unreachable_sample) ? m.unreachable_sample : []) lines.push(`  - ${r.uri ?? "?"}: ${r.reason}`);
+      }
+      const ic = data.identity_conflicts;
+      if (ic && typeof ic === "object" && ic.count) {
+        lines.push(`Identity conflicts: ${ic.count} (already indexed with different content; not skipped, not indexed. Re-run with overwrite_existing: true to replace them)`);
+        for (const r of Array.isArray(ic.sample) ? ic.sample : []) lines.push(`  - ${r.source_identity}${r.file_name ? ` (${r.file_name})` : ""}`);
+      }
       if (data.estimated_time_remaining_seconds != null) lines.push(`Estimated remaining: ${data.estimated_time_remaining_seconds}s`);
       const when = ["created_at", "started_at", "completed_at", "cancelled_at"].filter((k) => data[k]).map((k) => `${k.replace("_at", "")} ${data[k]}`);
       if (when.length) lines.push(`Timeline: ${when.join(", ")}`);
