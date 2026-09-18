@@ -43,6 +43,14 @@ const metadataValue = z.union([z.string(), z.number(), z.boolean()]);
 const indexOptionFields = {
   custom_metadata: z.record(metadataValue).optional().describe("Custom metadata attached to every indexed document (filterable in search)"),
   mask_pii: z.boolean().optional().describe("Mask detected PII (emails, names, SSNs, ...) in parsed text before embedding; a PII report is retained on the job (default false)"),
+  pii_engine: z.enum(["captain-jev", "captain-presidio"]).optional().describe("Masking engine: 'captain-jev' (default; TypeSafe's Jev reads every token in context and decides which values are personal data and of which kind; supports pii_fields/pii_instructions) or 'captain-presidio' (legacy: pattern recognizers and a named-entity model, inside Captain, built-in categories only). Requires mask_pii"),
+  pii_fallback: z.boolean().optional().describe("When Jev is unreachable: true (default) masks the file with captain-presidio and reports engine captain-presidio with fallback true; false fails the file instead"),
+  pii_fields: z.array(z.object({
+    name: z.string().regex(/^[A-Z][A-Z0-9_]{1,39}$/).describe("Tag, e.g. EMPLOYEE_ID (masked values become <EMPLOYEE_ID>)"),
+    description: z.string().min(1).max(300).describe("What the category covers, in plain language"),
+    examples: z.array(z.string().max(80)).max(10).optional().describe("Up to 10 sample values"),
+  })).max(20).optional().describe("Customer-defined PII categories to mask in addition to the built-in ones (up to 20). Requires mask_pii; Jev engine only"),
+  pii_instructions: z.string().max(1000).optional().describe("Plain-language guidance on what counts as personal data for this job, e.g. 'staff names may stay; patient names and bed numbers must be masked'. Requires mask_pii; Jev engine only"),
   max_files: z.number().int().min(1).optional().describe("Stop after this many files"),
   skip_existing: z.boolean().optional().describe("Skip files already indexed in the collection (default true)"),
   overwrite_existing: z.boolean().optional().describe("Re-index and replace files already in the collection (default false)"),
@@ -52,6 +60,10 @@ const indexOptionFields = {
 type IndexOptions = {
   custom_metadata?: Record<string, string | number | boolean>;
   mask_pii?: boolean;
+  pii_engine?: "captain-jev" | "captain-presidio";
+  pii_fallback?: boolean;
+  pii_fields?: { name: string; description: string; examples?: string[] }[];
+  pii_instructions?: string;
   max_files?: number;
   skip_existing?: boolean;
   overwrite_existing?: boolean;
@@ -59,7 +71,7 @@ type IndexOptions = {
   parsing_script?: string;
 };
 function applyIndexOptions(body: Record<string, unknown>, p: IndexOptions): void {
-  for (const k of ["custom_metadata", "mask_pii", "max_files", "skip_existing", "overwrite_existing", "transcription_language", "parsing_script"] as const) {
+  for (const k of ["custom_metadata", "mask_pii", "pii_engine", "pii_fallback", "pii_fields", "pii_instructions", "max_files", "skip_existing", "overwrite_existing", "transcription_language", "parsing_script"] as const) {
     if (p[k] !== undefined) body[k] = p[k];
   }
 }
@@ -449,6 +461,10 @@ export function registerCaptainTools(server: McpServer): void {
         processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' (OCR + images) or 'basic' (text only)"),
         custom_metadata: indexOptionFields.custom_metadata,
         mask_pii: indexOptionFields.mask_pii,
+        pii_engine: indexOptionFields.pii_engine,
+        pii_fallback: indexOptionFields.pii_fallback,
+        pii_fields: indexOptionFields.pii_fields,
+        pii_instructions: indexOptionFields.pii_instructions,
         transcription_language: indexOptionFields.transcription_language,
         parsing_script: indexOptionFields.parsing_script,
       },
@@ -484,6 +500,10 @@ export function registerCaptainTools(server: McpServer): void {
         languages: z.array(z.string()).optional().describe("Preferred caption languages in order, e.g. ['en', 'es']"),
         custom_metadata: indexOptionFields.custom_metadata,
         mask_pii: indexOptionFields.mask_pii,
+        pii_engine: indexOptionFields.pii_engine,
+        pii_fallback: indexOptionFields.pii_fallback,
+        pii_fields: indexOptionFields.pii_fields,
+        pii_instructions: indexOptionFields.pii_instructions,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -512,6 +532,10 @@ export function registerCaptainTools(server: McpServer): void {
         filename: z.string().optional().describe("Optional filename label for the indexed text"),
         custom_metadata: indexOptionFields.custom_metadata,
         mask_pii: indexOptionFields.mask_pii,
+        pii_engine: indexOptionFields.pii_engine,
+        pii_fallback: indexOptionFields.pii_fallback,
+        pii_fields: indexOptionFields.pii_fields,
+        pii_instructions: indexOptionFields.pii_instructions,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -553,6 +577,10 @@ export function registerCaptainTools(server: McpServer): void {
         overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
         transcription_language: z.string().optional().describe("AWS Transcribe language code for audio/video (e.g. 'en-US')"),
         mask_pii: indexOptionFields.mask_pii,
+        pii_engine: indexOptionFields.pii_engine,
+        pii_fallback: indexOptionFields.pii_fallback,
+        pii_fields: indexOptionFields.pii_fields,
+        pii_instructions: indexOptionFields.pii_instructions,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -617,6 +645,10 @@ export function registerCaptainTools(server: McpServer): void {
       if (params.overwrite_existing !== undefined) form.append("overwrite_existing", String(params.overwrite_existing));
       if (params.transcription_language) form.append("transcription_language", params.transcription_language);
       if (params.mask_pii !== undefined) form.append("mask_pii", String(params.mask_pii));
+      if (params.pii_engine !== undefined) form.append("pii_engine", params.pii_engine);
+      if (params.pii_fallback !== undefined) form.append("pii_fallback", String(params.pii_fallback));
+      if (params.pii_fields !== undefined) form.append("pii_fields", JSON.stringify(params.pii_fields));
+      if (params.pii_instructions !== undefined) form.append("pii_instructions", params.pii_instructions);
 
       log(`Uploading ${count} file(s) into '${params.collection}'`);
       const data = await captainUploadFiles(
