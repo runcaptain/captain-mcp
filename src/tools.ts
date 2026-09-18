@@ -798,7 +798,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Index from Google Cloud Storage",
       description:
-        "Index files from Google Cloud Storage into a Captain collection. Can index an entire bucket, a directory, or a single file. " +
+        "Index files from Google Cloud Storage into a Captain collection. Can index an entire bucket, a directory, a single file, or an explicit list of objects from a JSON Lines manifest in the same bucket (manifest_path). " +
         "Requires a GCS service account JSON key with read access.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
@@ -806,6 +806,7 @@ export function registerCaptainTools(server: McpServer): void {
         service_account_json: z.string().describe("GCS service account JSON key (stringified)"),
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
+        manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file listing the objects to index, one {\"uri\": \"gs://bucket/key\"} per line with optional source_identity, checksum, version_id, size, etag and custom_metadata. One bulk job; lines that are not usable are counted on the job, never fail it"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
@@ -826,6 +827,10 @@ export function registerCaptainTools(server: McpServer): void {
         if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `gs://${params.bucket_name}/${params.file_path}`;
         source = `gs://${params.bucket_name}/${params.file_path}`;
+      } else if (params.manifest_path) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/gcs/manifest`;
+        body.manifest_uri = `gs://${params.bucket_name}/${params.manifest_path}`;
+        source = `manifest gs://${params.bucket_name}/${params.manifest_path}`;
       } else if (params.directory_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/gcs/directory`;
         body.directory_path = params.directory_path;
@@ -846,7 +851,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Index from Azure Blob Storage",
       description:
-        "Index files from Azure Blob Storage into a Captain collection. Can index an entire container, a directory, or a single file. " +
+        "Index files from Azure Blob Storage into a Captain collection. Can index an entire container, a directory, a single file, or an explicit list of blobs from a JSON Lines manifest in the same container (manifest_path). " +
         "Requires Azure storage account name and key.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
@@ -855,6 +860,7 @@ export function registerCaptainTools(server: McpServer): void {
         account_key: z.string().describe("Azure storage account key"),
         directory_path: z.string().optional().describe("Directory path within the container"),
         file_path: z.string().optional().describe("Single file path within the container"),
+        manifest_path: z.string().optional().describe("Manifest mode: path within the container of a JSON Lines file listing the objects to index, one {\"uri\": \"https://{account}.blob.core.windows.net/{container}/key\"} per line with optional source_identity, checksum, version_id, size, etag and custom_metadata. One bulk job; lines that are not usable are counted on the job, never fail it"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
@@ -876,6 +882,10 @@ export function registerCaptainTools(server: McpServer): void {
         if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `azure://${params.container_name}/${params.file_path}`;
         source = `azure://${params.container_name}/${params.file_path}`;
+      } else if (params.manifest_path) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/azure/manifest`;
+        body.manifest_uri = `https://${params.account_name}.blob.core.windows.net/${params.container_name}/${params.manifest_path}`;
+        source = `manifest azure://${params.container_name}/${params.manifest_path}`;
       } else if (params.directory_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/azure/directory`;
         body.directory_path = params.directory_path;
@@ -896,7 +906,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Index from Cloudflare R2",
       description:
-        "Index files from Cloudflare R2 into a Captain collection. Can index an entire bucket, a directory, or a single file. " +
+        "Index files from Cloudflare R2 into a Captain collection. Can index an entire bucket, a directory, a single file, or an explicit list of objects from a JSON Lines manifest in the same bucket (manifest_path). " +
         "Requires R2 account ID and API token credentials.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
@@ -908,6 +918,7 @@ export function registerCaptainTools(server: McpServer): void {
           .describe("R2 jurisdiction the bucket lives in: 'default', 'eu', 'fedramp', or 'us' (US data residency)"),
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
+        manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file listing the objects to index, one {\"uri\": \"r2://bucket/key\"} per line with optional source_identity, checksum, version_id, size, etag and custom_metadata. One bulk job; lines that are not usable are counted on the job, never fail it"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
@@ -935,6 +946,10 @@ export function registerCaptainTools(server: McpServer): void {
         if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `r2://${params.bucket_name}/${params.file_path}`;
         source = `r2://${params.bucket_name}/${params.file_path}`;
+      } else if (params.manifest_path) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/r2/manifest`;
+        body.manifest_uri = `r2://${params.bucket_name}/${params.manifest_path}`;
+        source = `manifest r2://${params.bucket_name}/${params.manifest_path}`;
       } else if (params.directory_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/r2/directory`;
         body.directory_path = params.directory_path;
@@ -1001,7 +1016,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Index from Supabase Storage",
       description:
-        "Index files from Supabase Storage (S3-compatible) into a Captain collection. Indexes a whole bucket, a directory, or a single file. " +
+        "Index files from Supabase Storage (S3-compatible) into a Captain collection. Indexes a whole bucket, a directory, a single file, or an explicit list of objects from a JSON Lines manifest in the same bucket (manifest_path). " +
         "Requires the Supabase S3 endpoint URL and access key / secret.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
@@ -1012,6 +1027,7 @@ export function registerCaptainTools(server: McpServer): void {
         region: z.string().optional().describe("Region (default: us-east-1)"),
         directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
         file_path: z.string().optional().describe("Single object key within the bucket"),
+        manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file listing the objects to index, one {\"uri\": \"s3://bucket/key\"} per line with optional source_identity, checksum, version_id, size, etag and custom_metadata. One bulk job; lines that are not usable are counted on the job, never fail it"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
         ...indexOptionFields,
       },
@@ -1028,7 +1044,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Index from Backblaze B2",
       description:
-        "Index files from Backblaze B2 (S3-compatible) into a Captain collection. Indexes a whole bucket, a directory, or a single file. " +
+        "Index files from Backblaze B2 (S3-compatible) into a Captain collection. Indexes a whole bucket, a directory, a single file, or an explicit list of objects from a JSON Lines manifest in the same bucket (manifest_path). " +
         "Requires the Backblaze S3 endpoint URL and application key ID / key.",
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
@@ -1039,6 +1055,7 @@ export function registerCaptainTools(server: McpServer): void {
         region: z.string().optional().describe("Region (default: us-east-1)"),
         directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
         file_path: z.string().optional().describe("Single object key within the bucket"),
+        manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file listing the objects to index, one {\"uri\": \"s3://bucket/key\"} per line with optional source_identity, checksum, version_id, size, etag and custom_metadata. One bulk job; lines that are not usable are counted on the job, never fail it"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
         ...indexOptionFields,
       },
@@ -1213,6 +1230,7 @@ async function indexS3Compatible(
     region?: string;
     directory_path?: string;
     file_path?: string;
+    manifest_path?: string;
     processing_type?: "advanced" | "basic";
   } & IndexOptions,
 ): Promise<ToolResult> {
@@ -1232,6 +1250,10 @@ async function indexS3Compatible(
     endpoint = `${base}/file`;
     body.file_uri = params.file_path;
     source = `${provider}://${params.bucket_name}/${params.file_path}`;
+  } else if (params.manifest_path) {
+    endpoint = `${base}/manifest`;
+    body.manifest_uri = `s3://${params.bucket_name}/${params.manifest_path}`;
+    source = `manifest ${provider}://${params.bucket_name}/${params.manifest_path}`;
   } else if (params.directory_path) {
     endpoint = `${base}/directory`;
     body.directory_path = params.directory_path;
