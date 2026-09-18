@@ -290,6 +290,89 @@ export function registerCaptainTools(server: McpServer): void {
     }
   );
 
+  // ── captain_compact_collection ───────────────────────────────
+  server.registerTool(
+    "captain_compact_collection",
+    {
+      title: "Compact a Captain collection",
+      description:
+        "Clone a collection under a new name, then rebuild the clone's vector-store namespace in the background so it " +
+        "carries only the attribute names its rows still use. Use this to recover a collection whose namespace hit the " +
+        "1,024 attribute-name cap: past that cap the collection accepts no new filterable custom_metadata keys, so " +
+        "metadata writes persist but come back filterable: false and filtered queries fail. The clone reuses branched " +
+        "vectors and is not re-embedded, like captain_copy_collection. The source collection is never changed. The " +
+        "rewrite runs asynchronously: poll captain_get_compaction for the target until status is 'completed', then point " +
+        "your application at the target.",
+      inputSchema: {
+        collection: z.string().describe("Source collection name to compact"),
+        target_name: z
+          .string()
+          .describe(
+            "Name for the compacted clone. Unique within the organization and environment; 3-63 chars, alphanumeric start/end, letters, numbers, hyphens, underscores."
+          ),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Compacting collection '${params.collection}' into '${params.target_name}'`);
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/compact`, {
+        method: "POST",
+        body: { target_name: params.target_name },
+      });
+      const target = data.collection_name ?? params.target_name;
+      const lines = [
+        data.message ?? `Compacting '${params.collection}' into '${target}'.`,
+        `Target collection: ${target}`,
+        `New collection ID: ${data.collection_id ?? "unknown"}`,
+        `Documents copied: ${data.documents_copied ?? "unknown"}`,
+        ...compactionLines(data.compaction ?? {}),
+        `Poll captain_get_compaction for '${target}' until status is 'completed', then point your application at it.`,
+      ];
+      return textResult(lines.join("\n"));
+    }
+  );
+
+  // ── captain_get_compaction ───────────────────────────────────
+  server.registerTool(
+    "captain_get_compaction",
+    {
+      title: "Check Captain compaction progress",
+      description:
+        "Report the progress of the compaction that produced a collection (from captain_compact_collection). Returns " +
+        "status (pending, running, completed, or failed), rows copied and rows seen, attribute-name counts before and " +
+        "after, and shards written. Poll this until status is 'completed'.",
+      inputSchema: {
+        collection: z.string().describe("The compacted collection name (the target_name passed to captain_compact_collection)"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/compaction`);
+      return textResult([`Compaction of '${params.collection}':`, ...compactionLines(data)].join("\n"));
+    }
+  );
+
+  // ── captain_retry_compaction ─────────────────────────────────
+  server.registerTool(
+    "captain_retry_compaction",
+    {
+      title: "Retry a stopped Captain compaction",
+      description:
+        "Resume a compaction that stopped before it finished (a failed run, or one left running by an API restart). It " +
+        "continues from the shards already written and upserts rows, so nothing duplicates. Returns the same progress " +
+        "shape as captain_get_compaction.",
+      inputSchema: {
+        collection: z.string().describe("The compacted collection name (the target_name passed to captain_compact_collection)"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Retrying compaction of '${params.collection}'`);
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/compaction/retry`, { method: "POST" });
+      return textResult([`Compaction of '${params.collection}' resumed:`, ...compactionLines(data)].join("\n"));
+    }
+  );
+
   // ── captain_list_documents ───────────────────────────────────
   server.registerTool(
     "captain_list_documents",
@@ -1118,6 +1201,23 @@ export function registerCaptainTools(server: McpServer): void {
       return jobStartedResponse(data.job_id, source);
     }
   );
+}
+
+// Render a CompactionStatus, the progress shape the compact, compaction-status
+// and retry endpoints all return (nested under `compaction` on the compact
+// response, at the top level on the other two). Optional fields print only when
+// present, so the same helper serves the terse start response and the full poll.
+function compactionLines(c: any): string[] {
+  const lines = [`Status: ${c.status ?? "unknown"}`];
+  if (c.rows_copied != null || c.rows_seen != null)
+    lines.push(`Rows: ${c.rows_copied ?? 0} copied${c.rows_seen != null ? ` of ${c.rows_seen} seen` : ""}`);
+  if (c.names_before != null || c.names_after != null)
+    lines.push(`Attribute names: ${c.names_before ?? "?"} -> ${c.names_after ?? "?"}`);
+  if (c.shards_done != null) lines.push(`Shards: ${c.shards_done} of 256 written`);
+  const when = ["started_at", "finished_at", "updated_at"].filter((k) => c[k]).map((k) => `${k.replace(/_at$/, "")} ${c[k]}`);
+  if (when.length) lines.push(`Timeline: ${when.join(", ")}`);
+  if (c.error) lines.push(`Error: ${c.error}`);
+  return lines;
 }
 
 // Shared handler for the S3-compatible providers (Supabase, Backblaze): identical
