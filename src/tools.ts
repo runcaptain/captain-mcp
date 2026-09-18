@@ -290,6 +290,69 @@ export function registerCaptainTools(server: McpServer): void {
     }
   );
 
+  // ── captain_compact_collection ──────────────────────────────
+  server.registerTool(
+    "captain_compact_collection",
+    {
+      title: "Compact a Captain collection",
+      description:
+        "Copy a collection under a new name and rebuild its vectors without the attribute names its rows no longer use. " +
+        "A namespace keeps every attribute name ever written (cap 1,024), so a collection whose spreadsheets minted a column per header " +
+        "stops accepting new filterable custom_metadata keys; compaction is the recovery. The source is never modified. " +
+        "Costs the same as a copy. Poll captain_get_compaction and point your application at the target once status is completed.",
+      inputSchema: {
+        collection: z.string().describe("Source collection name"),
+        target_name: z.string().describe("Name for the compacted collection; same rules and uniqueness as a copy"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      log(`Compacting collection '${params.collection}' into '${params.target_name}'`);
+      const data = await captainFetch(config, `collections/${encodeURIComponent(params.collection)}/compact`, {
+        method: "POST",
+        body: { target_name: params.target_name },
+      });
+      return textResult([
+        data.message ?? `Copied '${params.collection}' to '${params.target_name}'; compaction running in the background.`,
+        `Documents copied: ${data.documents_copied ?? "unknown"}`,
+        `New collection ID: ${data.collection_id ?? "unknown"}`,
+        `Compaction status: ${data.compaction?.status ?? "pending"} (poll captain_get_compaction on '${params.target_name}')`,
+      ].join("\n"));
+    }
+  );
+
+  // ── captain_get_compaction ──────────────────────────────────
+  server.registerTool(
+    "captain_get_compaction",
+    {
+      title: "Get compaction status",
+      description:
+        "Progress of the compaction that produced a collection: status (pending, running, completed, failed), rows copied of rows seen, " +
+        "attribute names before and after, shards written, and the error when it failed. Retry a failed or stalled run with retry=true; " +
+        "it continues from the shards already written.",
+      inputSchema: {
+        collection: z.string().describe("The compacted (target) collection name"),
+        retry: z.boolean().optional().describe("Resume a failed or stalled compaction (default false)"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const base = `collections/${encodeURIComponent(params.collection)}/compaction`;
+      const data = params.retry
+        ? await captainFetch(config, `${base}/retry`, { method: "POST", body: {} })
+        : await captainFetch(config, base, { method: "GET" });
+      const lines = [
+        `Status: ${data.status}`,
+        `Rows: ${data.rows_copied ?? 0} of ${data.rows_seen ?? "?"}`,
+        `Attribute names: ${data.names_before ?? "?"} -> ${data.names_after ?? "?"}`,
+        `Shards written: ${data.shards_done ?? 0}`,
+      ];
+      if (data.error) lines.push(`Error: ${data.error}`);
+      if (data.finished_at) lines.push(`Finished: ${data.finished_at}`);
+      return textResult(lines.join("\n"));
+    }
+  );
+
   // ── captain_list_documents ───────────────────────────────────
   server.registerTool(
     "captain_list_documents",
