@@ -681,6 +681,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket (omit for full bucket)"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
     },
@@ -706,6 +707,7 @@ export function registerCaptainTools(server: McpServer): void {
       let source: string;
       if (params.file_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/s3/file`;
+        if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `s3://${params.bucket_name}/${params.file_path}`;
         source = `s3://${params.bucket_name}/${params.file_path}`;
       } else if (params.directory_path) {
@@ -737,6 +739,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
     },
@@ -752,6 +755,7 @@ export function registerCaptainTools(server: McpServer): void {
       let source: string;
       if (params.file_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/gcs/file`;
+        if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `gs://${params.bucket_name}/${params.file_path}`;
         source = `gs://${params.bucket_name}/${params.file_path}`;
       } else if (params.directory_path) {
@@ -784,6 +788,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the container"),
         file_path: z.string().optional().describe("Single file path within the container"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
     },
@@ -800,6 +805,7 @@ export function registerCaptainTools(server: McpServer): void {
       let source: string;
       if (params.file_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/azure/file`;
+        if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `azure://${params.container_name}/${params.file_path}`;
         source = `azure://${params.container_name}/${params.file_path}`;
       } else if (params.directory_path) {
@@ -835,6 +841,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
     },
@@ -857,6 +864,7 @@ export function registerCaptainTools(server: McpServer): void {
       let source: string;
       if (params.file_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/r2/file`;
+        if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `r2://${params.bucket_name}/${params.file_path}`;
         source = `r2://${params.bucket_name}/${params.file_path}`;
       } else if (params.directory_path) {
@@ -887,6 +895,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Dropbox folder to index recursively, e.g. '/Reports/2024' (omit for whole account)"),
         file_path: z.string().optional().describe("Single Dropbox file path, e.g. '/Reports/2024/q1.pdf'"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
+        source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
     },
@@ -901,6 +910,7 @@ export function registerCaptainTools(server: McpServer): void {
       let source: string;
       if (params.file_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/dropbox/file`;
+        if (params.source_identity) body.source_identity = params.source_identity;
         body.file_path = params.file_path;
         source = `dropbox:${params.file_path}`;
       } else if (params.directory_path) {
