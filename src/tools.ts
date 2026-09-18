@@ -43,7 +43,7 @@ const metadataValue = z.union([z.string(), z.number(), z.boolean()]);
 const indexOptionFields = {
   custom_metadata: z.record(metadataValue).optional().describe("Custom metadata attached to every indexed document (filterable in search)"),
   mask_pii: z.boolean().optional().describe("Mask detected PII (emails, names, SSNs, ...) in parsed text before embedding; a PII report is retained on the job (default false)"),
-  pii_engine: z.enum(["captain-jev", "captain-presidio"]).optional().describe("Masking engine: 'captain-jev' (default; recognizers propose, TypeSafe's Jev judges in context; supports pii_fields/pii_instructions) or 'captain-presidio' (recognizers only, inside Captain, built-in categories only). Requires mask_pii"),
+  pii_engine: z.enum(["captain-jev", "captain-presidio"]).optional().describe("Masking engine: 'captain-jev' (default; TypeSafe's Jev reads every token in context and decides which values are personal data and of which kind; supports pii_fields/pii_instructions) or 'captain-presidio' (legacy: pattern recognizers and a named-entity model, inside Captain, built-in categories only). Requires mask_pii"),
   pii_fallback: z.boolean().optional().describe("When Jev is unreachable: true (default) masks the file with captain-presidio and reports engine captain-presidio with fallback true; false fails the file instead"),
   pii_fields: z.array(z.object({
     name: z.string().regex(/^[A-Z][A-Z0-9_]{1,39}$/).describe("Tag, e.g. EMPLOYEE_ID (masked values become <EMPLOYEE_ID>)"),
