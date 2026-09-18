@@ -667,7 +667,7 @@ export function registerCaptainTools(server: McpServer): void {
     {
       title: "Index from Amazon S3",
       description:
-        "Index files from Amazon S3 into a Captain collection. Can index an entire bucket, a directory, or a single file. " +
+        "Index files from Amazon S3 into a Captain collection. Can index an entire bucket, a directory, a single file, or an explicit list of objects from a JSON Lines manifest in the same bucket (manifest_path). " +
         "Authenticate either with a cross-account IAM role (role_arn + external_id; recommended, no long-lived keys) " +
         "or with an access key pair.",
       inputSchema: {
@@ -680,6 +680,7 @@ export function registerCaptainTools(server: McpServer): void {
         bucket_region: z.string().optional().describe("AWS region (default: us-east-1)"),
         directory_path: z.string().optional().describe("Directory path within the bucket (omit for full bucket)"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
+        manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file listing the objects to index, one {\"uri\": \"s3://bucket/key\"} per line with optional source_identity, checksum, version_id and custom_metadata. One bulk job; lines that are not usable are counted on the job, never fail it"),
         processing_type: z.enum(["advanced", "basic"]).optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
@@ -710,6 +711,10 @@ export function registerCaptainTools(server: McpServer): void {
         if (params.source_identity) body.source_identity = params.source_identity;
         body.file_uri = `s3://${params.bucket_name}/${params.file_path}`;
         source = `s3://${params.bucket_name}/${params.file_path}`;
+      } else if (params.manifest_path) {
+        endpoint = `collections/${encodeURIComponent(params.collection)}/index/s3/manifest`;
+        body.manifest_uri = `s3://${params.bucket_name}/${params.manifest_path}`;
+        source = `manifest s3://${params.bucket_name}/${params.manifest_path}`;
       } else if (params.directory_path) {
         endpoint = `collections/${encodeURIComponent(params.collection)}/index/s3/directory`;
         body.directory_path = params.directory_path;
