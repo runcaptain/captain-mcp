@@ -113,7 +113,8 @@ export function registerEvalApiTools(server: McpServer): void {
         "and performs the upload itself. Returns the upload_id to pass to captain_run_eval, which must be used " +
         "within 15 minutes. Up to 10,000 cases. Question generation stays on your side (see captain_eval for " +
         "the sampling and paraphrase method); expected_files may be filenames or document ids. " +
-        "Requires an API-key connection (the Evaluation API is API-key only in v1).",
+        "Works on API-key and OAuth connections alike; an OAuth connection needs write access (captain:write), " +
+        "since an evaluation bills query credits per unit.",
       inputSchema: {
         collection: z.string().describe("Collection the evaluation runs against."),
         cases: z.array(CaseSchema).min(1).max(MAX_CASES).describe(`The case set, max ${MAX_CASES}.`),
