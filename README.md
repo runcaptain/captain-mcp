@@ -44,19 +44,10 @@ Exposes 19 tools:
 
 - `captain_create_eval_upload`, `captain_run_eval`, `captain_get_eval_results` — the same evaluation as an **asynchronous job inside Captain** (the Evaluation API): upload a case set of up to 10,000 questions with the documents each should retrieve, run it under one to eight named v3 configurations, then poll for scorecards (recall@1/3/10, MRR, nDCG@10, latency) and per-case results. The job is kept as the record: every question, configuration and answer can be read back (`include_answers`). Reach for these when the set is too large for one `captain_eval` call (the hosted gateway cuts a call at 60 s) or when the results should outlive the session; keep `captain_eval` for quick paired comparisons. Billed per query that ran, per the plan. API-key connections only in v1.
 
-**Job webhooks (12):** Endpoints belong to the organization, so these tools take no `environment` argument.
-- `captain_list_webhook_event_types` — the five job events (`job.completed`, `job.completed_with_errors`, `job.failed`, `job.timed_out`, `job.cancelled`) with each payload's JSON Schema. Every indexing job sends exactly one of them when it reaches its final status.
-- `captain_create_webhook_endpoint` — register an HTTPS URL that receives events for every indexing job in the organization, in all environments (the payload's `environment` field says where the job ran), with optional filters by event type, collection, sync and source. The signing secret is returned only in this response; no tool reads it back.
-- `captain_list_webhook_endpoints`, `captain_get_webhook_endpoint`, `captain_update_webhook_endpoint` (change filters, pause or resume), `captain_delete_webhook_endpoint`
-- `captain_rotate_webhook_secret` — a new secret, returned once; the old one keeps signing for 24 hours.
-- `captain_test_webhook_endpoint` — send an event's example payload (`"test": true`) to one endpoint.
-- `captain_list_webhook_deliveries`, `captain_list_webhook_delivery_attempts` — what was sent and how each attempt went (HTTP status, duration).
-- `captain_resend_webhook_delivery`, `captain_recover_webhook_endpoint` — re-send one event, or every failed event since a time within the last 7 days.
-
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval`, the Evaluation API and job webhooks — 84 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval` and the Evaluation API — 72 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.
