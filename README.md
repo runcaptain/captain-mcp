@@ -44,9 +44,9 @@ Exposes 19 tools:
 
 - `captain_create_eval_upload`, `captain_run_eval`, `captain_get_eval_results` — the same evaluation as an **asynchronous job inside Captain** (the Evaluation API): upload a case set of up to 10,000 questions with the documents each should retrieve, run it under one to eight named v3 configurations, then poll for scorecards (recall@1/3/10, MRR, nDCG@10, latency) and per-case results. The job is kept as the record: every question, configuration and answer can be read back (`include_answers`). Reach for these when the set is too large for one `captain_eval` call (the hosted gateway cuts a call at 60 s) or when the results should outlive the session; keep `captain_eval` for quick paired comparisons. Billed per query that ran, per the plan. API-key connections only in v1.
 
-**Job webhooks (12):**
+**Job webhooks (12):** Endpoints belong to the organization, so these tools take no `environment` argument.
 - `captain_list_webhook_event_types` — the five job events (`job.completed`, `job.completed_with_errors`, `job.failed`, `job.timed_out`, `job.cancelled`) with each payload's JSON Schema. Every indexing job sends exactly one of them when it reaches its final status.
-- `captain_create_webhook_endpoint` — register an HTTPS URL for the environment in use, with optional filters by event type, collection, sync and source. The signing secret is returned only in this response; no tool reads it back.
+- `captain_create_webhook_endpoint` — register an HTTPS URL that receives events for every indexing job in the organization, in all environments (the payload's `environment` field says where the job ran), with optional filters by event type, collection, sync and source. The signing secret is returned only in this response; no tool reads it back.
 - `captain_list_webhook_endpoints`, `captain_get_webhook_endpoint`, `captain_update_webhook_endpoint` (change filters, pause or resume), `captain_delete_webhook_endpoint`
 - `captain_rotate_webhook_secret` — a new secret, returned once; the old one keeps signing for 24 hours.
 - `captain_test_webhook_endpoint` — send an event's example payload (`"test": true`) to one endpoint.

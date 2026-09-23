@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { registerWebhookTools } from '../dist/webhookTools.js';
+import { registerWebhookTools, WEBHOOK_TOOL_NAMES } from '../dist/webhookTools.js';
 import { buildServer, TOOL_COUNT } from '../dist/server.js';
 import { runWithConfig } from '../dist/captainClient.js';
 
@@ -38,6 +38,7 @@ test('registers one tool per /v2/webhooks route and none that reads a secret bac
     'captain_recover_webhook_endpoint',
   ]);
   for (const name of map.keys()) assert.doesNotMatch(name, /get_.*secret|reveal/);
+  assert.deepEqual([...WEBHOOK_TOOL_NAMES], [...map.keys()], 'every webhook tool is exempt from the environment argument');
   assert.match(map.get('captain_create_webhook_endpoint').definition.description, /ONLY in this response/);
   assert.match(map.get('captain_rotate_webhook_secret').definition.description, /24 hours/);
 });
@@ -109,4 +110,14 @@ test('an OAuth connection reaches the same routes under /mcp-app with the enviro
   const u = new URL(seen[0].url);
   assert.equal(u.pathname, '/mcp-app/v2/webhooks/endpoints');
   assert.equal(u.searchParams.get('environment'), 'production');
+});
+
+test('webhook tools take no environment argument; other tools still do', () => {
+  const tools = buildServer()._registeredTools;
+  for (const name of WEBHOOK_TOOL_NAMES) {
+    const shape = tools[name].inputSchema?.shape ?? tools[name].inputSchema ?? {};
+    assert.equal('environment' in shape, false, `${name} must not take environment`);
+  }
+  const jobs = tools['captain_list_jobs'].inputSchema;
+  assert.ok('environment' in (jobs?.shape ?? jobs), 'non-webhook tools keep the environment argument');
 });

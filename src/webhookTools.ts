@@ -6,6 +6,26 @@ const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 const enc = encodeURIComponent;
 const json = (data: unknown): ToolResult => textResult(JSON.stringify(data, null, 2));
 
+/**
+ * Webhook endpoints belong to the organization, not to an environment: one
+ * set receives events for jobs in every environment. These tools therefore
+ * take no `environment` argument (server.ts skips them when adding it).
+ */
+export const WEBHOOK_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "captain_list_webhook_event_types",
+  "captain_create_webhook_endpoint",
+  "captain_list_webhook_endpoints",
+  "captain_get_webhook_endpoint",
+  "captain_update_webhook_endpoint",
+  "captain_delete_webhook_endpoint",
+  "captain_rotate_webhook_secret",
+  "captain_test_webhook_endpoint",
+  "captain_list_webhook_deliveries",
+  "captain_list_webhook_delivery_attempts",
+  "captain_resend_webhook_delivery",
+  "captain_recover_webhook_endpoint",
+]);
+
 /** The five job events, one per final job status. */
 export const WEBHOOK_EVENT_TYPES = [
   "job.completed",
@@ -110,11 +130,11 @@ export function registerWebhookTools(server: McpServer): void {
     {
       title: "Create a webhook endpoint",
       description:
-        "Register an HTTPS URL that receives a signed request when an indexing job in this environment finishes. " +
+        "Register an HTTPS URL that receives a signed request when any indexing job in the organization finishes, " +
+        "in every environment (the payload's data.environment says where the job ran). " +
         "The response contains the endpoint's signing secret (whsec_...). It is returned ONLY in this response and " +
         "cannot be read back later by any tool or API call, so show it to the user now and tell them to store it; " +
-        "if it is lost, use captain_rotate_webhook_secret. The endpoint belongs to the environment of the key or " +
-        "connection in use (at most 20 per environment). " +
+        "if it is lost, use captain_rotate_webhook_secret. An organization can have up to 20 endpoints. " +
         FILTER_RULE +
         " Follow with captain_test_webhook_endpoint to check the receiver." +
         WRITE_NOTE,
@@ -144,7 +164,7 @@ export function registerWebhookTools(server: McpServer): void {
     {
       title: "List webhook endpoints",
       description:
-        "List the webhook endpoints in this environment with their URL, filters, whether they are disabled (and why), " +
+        "List the organization's webhook endpoints with their URL, filters, whether they are disabled (and why), " +
         "and the last delivery's time and status. Secrets are never included. Read-only.",
       inputSchema: {},
     },

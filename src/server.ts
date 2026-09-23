@@ -12,7 +12,7 @@ import { registerEvalApiTools } from "./evalApiTools.js";
 import { registerQueryHistoryTools } from "./queryHistoryTools.js";
 import { registerDocumentTools } from "./documentTools.js";
 import { registerJobTools } from "./jobTools.js";
-import { registerWebhookTools } from "./webhookTools.js";
+import { registerWebhookTools, WEBHOOK_TOOL_NAMES } from "./webhookTools.js";
 
 export const VERSION = "0.9.0";
 /** Actual number of tools registered by buildServer() — verified against the registry. */
@@ -42,6 +42,8 @@ function withEnvironmentArg(server: McpServer): void {
     config: { inputSchema?: Record<string, unknown> } & Record<string, unknown>,
     cb: unknown,
   ) => {
+    // Organization-wide tools (job webhooks) take no environment.
+    if (WEBHOOK_TOOL_NAMES.has(name)) return (original as (...a: any[]) => unknown)(name, config, cb);
     const inputSchema = {
       ...(config.inputSchema ?? {}),
       environment: z
