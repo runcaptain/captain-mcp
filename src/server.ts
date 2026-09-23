@@ -16,7 +16,7 @@ import { registerWebhookTools, WEBHOOK_TOOL_NAMES } from "./webhookTools.js";
 
 export const VERSION = "0.9.0";
 /** Actual number of tools registered by buildServer() — verified against the registry. */
-export const TOOL_COUNT = 84;
+export const TOOL_COUNT = 74;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
