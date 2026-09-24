@@ -1,6 +1,6 @@
 {
   "name": "@captain-sdk/captain-mcp",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "MCP server for Captain \u2014 multimodal RAG search, chunk management, and live project search. Usable from Claude Code, Cursor, and any MCP-aware client. Runs over stdio (local) or Streamable HTTP (hosted).",
   "type": "module",
   "license": "MIT",
@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test scripts/test-query-timing.mjs scripts/test-eval-api-tools.mjs scripts/test-inline-file-validation.mjs",
+    "test": "npm run build && node --test scripts/test-query-timing.mjs scripts/test-eval-api-tools.mjs scripts/test-inline-file-validation.mjs scripts/test-webhook-tools.mjs",
     "start": "node dist/server.js",
     "start:http": "node dist/httpServer.js",
     "dev": "tsc --watch",
