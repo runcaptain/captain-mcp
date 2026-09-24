@@ -33,13 +33,30 @@ const endpointId = z.string().min(1).describe("Webhook endpoint id (whe_...), fr
 const messageId = z
   .string()
   .min(1)
-  .describe("The delivery's message_id from action deliveries, or the event id (evt_<job_id>) from the payload");
-const url = z.string().url().describe("HTTPS URL that receives events (https://, publicly reachable)");
+  .describe(
+    "Which delivery: its message_id (msg_...) from action deliveries. The attempts and resend routes also accept the payload's event id (evt_<job_id>) for the same delivery.",
+  );
+const url = z
+  .string()
+  .url()
+  .refine((value) => value.startsWith("https://"), { message: "url must start with https://" })
+  .describe("HTTPS URL that receives events (https://, publicly reachable)");
 const eventType = z.enum(WEBHOOK_EVENT_TYPES).describe("Which event's example to send (default job.completed)");
 const limit = z.number().int().min(1).max(100).describe("Items per page (default 25, max 100)");
 const cursor = z.string().describe("next_cursor from the previous page");
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const since = z
   .string()
+  .refine((value) => /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value)), {
+    message: "since must be an ISO 8601 time, for example 2026-09-22T00:00:00Z",
+  })
+  .refine(
+    (value) => {
+      const age = Date.now() - Date.parse(value);
+      return age >= 0 && age <= SEVEN_DAYS_MS;
+    },
+    { message: "since must be in the past and within the last 7 days" },
+  )
   .describe("ISO 8601 time, for example 2026-09-22T00:00:00Z. In the past and within the last 7 days.");
 
 const endpointFields = {
@@ -198,7 +215,7 @@ export function registerWebhookTools(server: McpServer): void {
       const config = getConfig();
       switch (p.action) {
         case "create": {
-          log(`Creating webhook endpoint for ${p.url}`);
+          log("Creating webhook endpoint");
           const data = await captainFetch(config, "webhooks/endpoints", {
             method: "POST",
             body: pickDefined(p, ENDPOINT_KEYS),

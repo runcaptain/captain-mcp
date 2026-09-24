@@ -24,6 +24,7 @@ function mockFetch(t, reply = {}) {
   });
   return seen;
 }
+const recentSince = () => new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const route = (s) => `${s.method} ${new URL(s.url).pathname}${new URL(s.url).search}`;
 
 test('registers exactly two webhook tools, with the documented actions', () => {
@@ -113,7 +114,8 @@ test('captain_webhook_events: every action sends the right method, path and body
   await call(map, EVENTS, { action: 'attempts', endpoint_id: 'whe_1', message_id: 'evt_j1' });
   await call(map, EVENTS, { action: 'attempts', endpoint_id: 'whe_1', message_id: 'evt_j1', limit: 5, cursor: 'c2' });
   await call(map, EVENTS, { action: 'resend', endpoint_id: 'whe_1', message_id: 'msg_1' });
-  await call(map, EVENTS, { action: 'recover', endpoint_id: 'whe_1', since: '2026-09-22T00:00:00Z' });
+  const since = recentSince();
+  await call(map, EVENTS, { action: 'recover', endpoint_id: 'whe_1', since });
   assert.deepEqual(seen.map(route), [
     'GET /v2/webhooks/event-types',
     'GET /v2/webhooks/endpoints/whe_1/deliveries',
@@ -124,7 +126,7 @@ test('captain_webhook_events: every action sends the right method, path and body
     'POST /v2/webhooks/endpoints/whe_1/recover',
   ]);
   assert.deepEqual(seen.map((s) => s.body), [undefined, undefined, undefined, undefined, undefined, undefined,
-    { since: '2026-09-22T00:00:00Z' }]);
+    { since }]);
 });
 
 test('captain_webhook_setup: each action validates its own arguments before any request', async (t) => {
@@ -133,6 +135,7 @@ test('captain_webhook_setup: each action validates its own arguments before any 
   const cases = [
     [{ action: 'create' }, /action "create": url is required/],
     [{ action: 'create', url: 'not a url' }, /action "create": url: Invalid url/],
+    [{ action: 'create', url: 'http://example.com/hooks' }, /url must start with https:\/\//],
     [{ action: 'create', url: 'https://x.test', endpoint_id: 'whe_1' }, /endpoint_id not used by this action/],
     [{ action: 'get' }, /action "get": endpoint_id is required\. This action takes: endpoint_id\./],
     [{ action: 'update' }, /action "update": endpoint_id is required/],
@@ -162,6 +165,9 @@ test('captain_webhook_events: each action validates its own arguments before any
     [{ action: 'resend', endpoint_id: 'whe_1' }, /action "resend": message_id is required/],
     [{ action: 'resend', message_id: 'msg_1' }, /action "resend": endpoint_id is required/],
     [{ action: 'recover', endpoint_id: 'whe_1' }, /action "recover": since is required/],
+    [{ action: 'recover', endpoint_id: 'whe_1', since: 'yesterday' }, /since must be an ISO 8601 time/],
+    [{ action: 'recover', endpoint_id: 'whe_1', since: new Date(Date.now() + 3600e3).toISOString() }, /within the last 7 days/],
+    [{ action: 'recover', endpoint_id: 'whe_1', since: new Date(Date.now() - 8 * 86400e3).toISOString() }, /within the last 7 days/],
     [{ action: 'event_types', endpoint_id: 'whe_1' }, /endpoint_id not used by this action/],
     [{ action: 'redeliver' }, /action must be one of event_types, deliveries, attempts, resend, recover/],
   ];
@@ -213,4 +219,14 @@ test('the advertised input schema lists every argument (a flat object, not an em
   assert.deepEqual(Object.keys(tools[EVENTS].inputSchema.shape).sort(), [
     'action', 'cursor', 'endpoint_id', 'limit', 'message_id', 'since',
   ]);
+});
+
+test('creating an endpoint never logs the receiver URL', async (t) => {
+  const map = handlers();
+  mockFetch(t, { endpoint_id: 'whe_1', secret: 'whsec_x' });
+  const written = [];
+  t.mock.method(process.stderr, 'write', (chunk) => { written.push(String(chunk)); return true; });
+  await call(map, SETUP, { action: 'create', url: 'https://example.com/hooks?token=receiver-secret' });
+  assert.ok(written.length > 0, 'the create is logged');
+  assert.ok(written.every((line) => !line.includes('receiver-secret') && !line.includes('example.com')));
 });
