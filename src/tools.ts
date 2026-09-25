@@ -40,28 +40,47 @@ const metadataValue = z.union([z.string(), z.number(), z.boolean()]);
  * friends). Spread into a tool's inputSchema and forwarded with
  * applyIndexOptions so a knob added to the API lands on every tool at once.
  */
-const indexOptionFields = {
+export const indexOptionFields = {
   custom_metadata: z.record(metadataValue).optional().describe("Custom metadata attached to every indexed document (filterable in search)"),
   mask_pii: z.boolean().optional().describe("Mask detected PII (emails, names, SSNs, ...) in parsed text before embedding; a PII report is retained on the job (default false)"),
-  pii_engine: z.enum(["captain-jev", "captain-presidio"]).optional().describe("Masking engine: 'captain-jev' (default; TypeSafe's Jev reads every token in context and decides which values are personal data and of which kind; supports pii_fields/pii_instructions) or 'captain-presidio' (legacy: pattern recognizers and a named-entity model, inside Captain, built-in categories only). Requires mask_pii"),
-  pii_fallback: z.boolean().optional().describe("When Jev is unreachable: true (default) masks the file with captain-presidio and reports engine captain-presidio with fallback true; false fails the file instead"),
+  pii_engine: z.enum(["kev", "jev", "presidio", "captain-jev", "captain-presidio"]).optional().describe(
+    "Masking engine. 'kev' (default): Captain's Kev classifier model, runs on Captain's infrastructure, supports pii_fields and pii_instructions, and has no fallback, so a file Kev cannot mask fails to index. " +
+    "'jev': TypeSafe's hosted Jev model, slightly more accurate, best-effort availability, supports pii_fields and pii_instructions, and may list fallbacks in pii_fallback. " +
+    "'presidio': the legacy pattern engine, built-in categories only (pii_fields and pii_instructions are rejected), never used as a fallback. " +
+    "The earlier names 'captain-jev' and 'captain-presidio' still work as before. Requires mask_pii"),
+  pii_fallback: z.union([
+    z.object({
+      engines: z.array(z.enum(["jev-openrouter", "jev-ai-gateway", "kev"])).optional().describe("Ordered fallback engines, tried in turn when the one before cannot mask a file. No duplicates. Omitted or empty means no fallback"),
+      retry_budget_seconds: z.number().int().min(0).max(300).optional().describe("Extra retry and wait time per engine for each piece of a file, 0 to 300 (default 60). 0 means one attempt per engine"),
+    }).strict(),
+    z.boolean(),
+  ]).optional().describe(
+    "Fallbacks for pii_engine 'jev' only, as an object, e.g. {\"engines\": [\"jev-ai-gateway\", \"kev\"], \"retry_budget_seconds\": 60}. " +
+    "Omit it for no fallback. A boolean is accepted only with the earlier engine names 'captain-jev' and 'captain-presidio'"),
   pii_fields: z.array(z.object({
     name: z.string().regex(/^[A-Z][A-Z0-9_]{1,39}$/).describe("Tag, e.g. EMPLOYEE_ID (masked values become <EMPLOYEE_ID>)"),
     description: z.string().min(1).max(300).describe("What the category covers, in plain language"),
     examples: z.array(z.string().max(80)).max(10).optional().describe("Up to 10 sample values"),
-  })).max(20).optional().describe("Customer-defined PII categories to mask in addition to the built-in ones (up to 20). Requires mask_pii; Jev engine only"),
-  pii_instructions: z.string().max(1000).optional().describe("Plain-language guidance on what counts as personal data for this job, e.g. 'staff names may stay; patient names and bed numbers must be masked'. Requires mask_pii; Jev engine only"),
+  })).max(20).optional().describe("Customer-defined PII categories to mask in addition to the built-in ones (up to 20). Requires mask_pii; engines kev and jev only (presidio rejects it)"),
+  pii_instructions: z.string().max(1000).optional().describe("Plain-language guidance on what counts as personal data for this job, e.g. 'staff names may stay; patient names and bed numbers must be masked'. Requires mask_pii; engines kev and jev only (presidio rejects it)"),
   max_files: z.number().int().min(1).optional().describe("Stop after this many files"),
   skip_existing: z.boolean().optional().describe("Skip files already indexed in the collection (default true)"),
   overwrite_existing: z.boolean().optional().describe("Re-index and replace files already in the collection (default false)"),
   transcription_language: z.string().optional().describe("Language code for audio/video transcription, e.g. 'en-US'"),
   parsing_script: z.string().optional().describe("JavaScript parsing script applied to each file (validate it first with captain_validate_parsing_script)"),
 };
+type PiiFallback =
+  | { engines?: ("jev-openrouter" | "jev-ai-gateway" | "kev")[]; retry_budget_seconds?: number }
+  | boolean;
+/** Multipart form value for pii_fallback: booleans as "true"/"false", the object as a JSON string. */
+export function piiFallbackFormValue(v: PiiFallback): string {
+  return typeof v === "boolean" ? String(v) : JSON.stringify(v);
+}
 type IndexOptions = {
   custom_metadata?: Record<string, string | number | boolean>;
   mask_pii?: boolean;
-  pii_engine?: "captain-jev" | "captain-presidio";
-  pii_fallback?: boolean;
+  pii_engine?: "kev" | "jev" | "presidio" | "captain-jev" | "captain-presidio";
+  pii_fallback?: PiiFallback;
   pii_fields?: { name: string; description: string; examples?: string[] }[];
   pii_instructions?: string;
   max_files?: number;
@@ -661,7 +680,7 @@ export function registerCaptainTools(server: McpServer): void {
       if (params.transcription_language) form.append("transcription_language", params.transcription_language);
       if (params.mask_pii !== undefined) form.append("mask_pii", String(params.mask_pii));
       if (params.pii_engine !== undefined) form.append("pii_engine", params.pii_engine);
-      if (params.pii_fallback !== undefined) form.append("pii_fallback", String(params.pii_fallback));
+      if (params.pii_fallback !== undefined) form.append("pii_fallback", piiFallbackFormValue(params.pii_fallback));
       if (params.pii_fields !== undefined) form.append("pii_fields", JSON.stringify(params.pii_fields));
       if (params.pii_instructions !== undefined) form.append("pii_instructions", params.pii_instructions);
 
