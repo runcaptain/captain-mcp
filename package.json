@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test scripts/test-query-timing.mjs scripts/test-eval-api-tools.mjs scripts/test-inline-file-validation.mjs scripts/test-webhook-tools.mjs",
+    "test": "npm run build && node --test scripts/test-query-timing.mjs scripts/test-eval-api-tools.mjs scripts/test-inline-file-validation.mjs scripts/test-webhook-tools.mjs scripts/test-pii-options.mjs",
     "start": "node dist/server.js",
     "start:http": "node dist/httpServer.js",
     "dev": "tsc --watch",
