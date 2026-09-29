@@ -115,6 +115,68 @@ export function buildQueryV3Body(query: string, cfg: QueryV3Config): Record<stri
   return body;
 }
 
+/** Most collections one POST /v3/query request may name (MULTI_QUERY_MAX_COLLECTIONS in the API). */
+export const MULTI_QUERY_MAX_COLLECTIONS = 10;
+
+/** One entry of a multi-collection query: a collection, an optional query override, and any v3 query parameter. */
+export const MultiQueryEntrySchema = QueryV3ConfigSchema.extend({
+  collection: z.string().min(1).describe("Collection this entry searches."),
+  query: z.string().min(1).optional()
+    .describe("Query for this entry only. Omit it to use the top-level `query`."),
+});
+export type MultiQueryEntry = z.infer<typeof MultiQueryEntrySchema>;
+
+/**
+ * Build the POST /v3/query body. Each entry is built exactly as
+ * captain_search_v3 builds a single query (buildQueryV3Body, so the same
+ * `limit` default and include_* flattening apply), then gets its collection.
+ * An entry that omitted `query` is sent without one, so the server applies
+ * the top-level query to it.
+ */
+export function buildMultiQueryV3Body(
+  query: string | undefined,
+  entries: MultiQueryEntry[],
+): Record<string, unknown> {
+  const collections = entries.map((entry) => {
+    const { collection, query: entryQuery, ...cfg } = entry;
+    const { query: _unused, ...rest } = buildQueryV3Body(entryQuery ?? "", cfg);
+    return entryQuery === undefined ? { collection, ...rest } : { collection, query: entryQuery, ...rest };
+  });
+  const body: Record<string, unknown> = { collections };
+  if (query !== undefined) body.query = query;
+  return body;
+}
+
+/**
+ * Render a POST /v3/query response: one section per slot, in request order,
+ * with a failed slot's status code and message up front. Each succeeded slot
+ * is the same JSON captain_search_v3 returns, plus `collection`.
+ */
+export function formatMultiQueryResult(data: unknown): ToolResult {
+  const slots: any[] = Array.isArray((data as any)?.results) ? (data as any).results : [];
+  const failed = slots.filter((s) => s?.status !== "succeeded").length;
+  const lines: string[] = [
+    `${slots.length - failed} succeeded, ${failed} failed of ${slots.length} collection(s). ` +
+      "Each collection has its own ranked list. Results are not merged, and scores from different " +
+      "collections are not comparable.",
+    `request_id: ${(data as any)?.request_id ?? "unknown"}, execution_time_ms: ${(data as any)?.execution_time_ms ?? "unknown"}`,
+  ];
+  slots.forEach((slot, i) => {
+    const name = slot?.collection ?? "unknown";
+    if (slot?.status === "succeeded") {
+      lines.push("", `## [${i}] ${name}: succeeded`, JSON.stringify(slot, null, 2));
+    } else {
+      const err = slot?.error ?? {};
+      lines.push(
+        "",
+        `## [${i}] ${name}: failed (${err.status_code ?? "unknown status"}) ${err.message ?? ""}`.trimEnd(),
+        JSON.stringify(slot, null, 2),
+      );
+    }
+  });
+  return textResult(lines.join("\n"));
+}
+
 /**
  * v3 chunk-level tools: list/get chunks, chunk-metadata CRUD (which writes
  * through to the vector store so the metadata becomes filterable in search),
@@ -493,6 +555,40 @@ export function registerChunkTools(server: McpServer): void {
         { version: "v3", method: "POST", body },
       );
       return json(data);
+    }
+  );
+
+  // ── captain_search_v3_multi ─────────────────────────────────
+  // POST /v3/query: several collections in one request. Failures after search
+  // starts come back per slot inside an HTTP 200, so the formatter surfaces them.
+  server.registerTool(
+    "captain_search_v3_multi",
+    {
+      title: "Search several collections in one call (v3)",
+      description:
+        "Search 1 to 10 collections in one request. Use this instead of calling captain_search_v3 once per " +
+        "collection. Each entry in `collections` names a collection and takes every captain_search_v3 parameter " +
+        "(limit, filter, semantic_ratio, rerank, boost, exclude_chunk_types, the include_* flags and so on), so " +
+        "entries can be tuned separately. Set `query` at the top level to search every entry with it; set " +
+        "`query` on an entry to override it for that entry. An entry with no query of its own needs the " +
+        "top-level one. The response has one result per entry, in the same order. Each result is a separate " +
+        "ranked list for its collection: results are never merged, and scores from different collections are " +
+        "not comparable. One entry can fail (a missing collection, a bad filter) while the others succeed; a " +
+        "failed entry shows its status code and message. Errors in the request itself (validation, access) fail " +
+        "the whole call before any search runs. Each succeeded entry is billed as one query.",
+      inputSchema: {
+        query: z.string().min(1).optional()
+          .describe("Query for every entry that does not set its own `query`."),
+        collections: z.array(MultiQueryEntrySchema).min(1).max(MULTI_QUERY_MAX_COLLECTIONS)
+          .describe("1 to 10 entries, one per collection search. Result i answers entry i. The same collection may appear more than once."),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const body = buildMultiQueryV3Body(params.query, params.collections);
+      log(`v3 multi search over ${params.collections.length} collection(s)`);
+      const data = await captainFetch(config, "query", { version: "v3", method: "POST", body });
+      return formatMultiQueryResult(data);
     }
   );
 }
