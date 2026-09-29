@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { z } from 'zod';
 import {
-  registerChunkTools, buildMultiQueryV3Body, buildQueryV3Body, formatMultiQueryResult, MULTI_QUERY_MAX_COLLECTIONS,
+  registerChunkTools, buildMultiQueryV3Body, buildQueryV3Body, formatMultiQueryResult, entriesMissingQuery, MULTI_QUERY_MAX_COLLECTIONS,
 } from '../dist/chunkTools.js';
 import { runWithConfig } from '../dist/captainClient.js';
 
@@ -84,7 +84,7 @@ test('handler POSTs /v3/query and renders each slot under its index and collecti
     collections: [{ collection: 'policies', limit: 10 }, { collection: 'missing', limit: 3 }],
   });
   const text = result.content[0].text;
-  assert.match(text, /^1 succeeded, 1 failed of 2 collection\(s\)/);
+  assert.match(text, /^1 succeeded, 1 failed, 0 unknown of 2 collection\(s\)/);
   assert.match(text, /not merged/);
   assert.match(text, /## \[0\] policies: succeeded/);
   assert.match(text, /## \[1\] missing: failed \(404\) Collection not found/);
@@ -103,7 +103,25 @@ test('oauth mode routes through /mcp-app/v3/query with the environment', async (
   assert.equal(seenUrl.searchParams.get('environment'), 'staging');
 });
 
-test('formatter never reports all-clear when a slot has no status', () => {
-  const text = formatMultiQueryResult({ results: [{ collection: 'x' }], request_id: 'r', execution_time_ms: 1 }).content[0].text;
-  assert.match(text, /^0 succeeded, 1 failed of 1/);
+test('formatter reports a slot with no status as unknown, not failed', () => {
+  const text = formatMultiQueryResult({ results: [{ collection: 'x' }], request_id: 'r', execution_time_ms: 1 }, 1).content[0].text;
+  assert.match(text, /^0 succeeded, 0 failed, 1 unknown of 1/);
+  assert.match(text, /## \[0\] x: unknown/);
+});
+
+test('formatter flags a response with fewer results than requested entries', () => {
+  const text = formatMultiQueryResult({ request_id: 'r', execution_time_ms: 1 }, 2).content[0].text;
+  assert.match(text, /^WARNING: requested 2 collection\(s\) but the response has 0 result\(s\)/);
+});
+
+test('an entry with no query and no top-level query is refused before any request', async (t) => {
+  assert.deepEqual(entriesMissingQuery(undefined, [{ collection: 'a', query: 'x' }, { collection: 'b' }]), [1]);
+  assert.deepEqual(entriesMissingQuery('top', [{ collection: 'a' }]), []);
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
+  await assert.rejects(
+    runWithConfig({ apiKey: 'synthetic' }, () =>
+      tools().get(TOOL).handler({ collections: [{ collection: 'a', query: 'x' }, { collection: 'b' }] })),
+    /collections\[1\] have no query/,
+  );
+  assert.equal(fetchMock.mock.callCount(), 0);
 });
