@@ -115,7 +115,7 @@ export function buildQueryV3Body(query: string, cfg: QueryV3Config): Record<stri
   return body;
 }
 
-/** Most collections one POST /v3/query request may name (MULTI_QUERY_MAX_COLLECTIONS in the API). */
+/** Most collections one POST /v3/collections/batch-query request may name (MULTI_QUERY_MAX_COLLECTIONS in the API). */
 export const MULTI_QUERY_MAX_COLLECTIONS = 10;
 
 /** One entry of a multi-collection query: a collection, an optional query override, and any v3 query parameter. */
@@ -127,7 +127,7 @@ export const MultiQueryEntrySchema = QueryV3ConfigSchema.extend({
 export type MultiQueryEntry = z.infer<typeof MultiQueryEntrySchema>;
 
 /**
- * Build the POST /v3/query body. Each entry is built exactly as
+ * Build the POST /v3/collections/batch-query body. Each entry is built exactly as
  * captain_search_v3 builds a single query (buildQueryV3Body, so the same
  * `limit` default and include_* flattening apply), then gets its collection.
  * An entry that omitted `query` is sent without one, so the server applies
@@ -158,7 +158,7 @@ export function entriesMissingQuery(query: string | undefined, entries: MultiQue
 }
 
 /**
- * Render a POST /v3/query response: one section per slot, in request order,
+ * Render a POST /v3/collections/batch-query response: one section per slot, in request order,
  * with a failed slot's status code and message up front. Each succeeded slot
  * is the same JSON captain_search_v3 returns, plus `collection`. A slot with
  * neither status is reported as unknown, never as succeeded or failed, and a
@@ -583,7 +583,7 @@ export function registerChunkTools(server: McpServer): void {
   );
 
   // ── captain_search_v3_multi ─────────────────────────────────
-  // POST /v3/query: several collections in one request. Failures after search
+  // POST /v3/collections/batch-query: several collections in one request. Failures after search
   // starts come back per slot inside an HTTP 200, so the formatter surfaces them.
   server.registerTool(
     "captain_search_v3_multi",
@@ -599,7 +599,7 @@ export function registerChunkTools(server: McpServer): void {
         "ranked list for its collection: results are never merged, and scores from different collections are " +
         "not comparable. One entry can fail (a missing collection, a bad filter) while the others succeed; a " +
         "failed entry shows its status code and message. Errors in the request itself (validation, access) fail " +
-        "the whole call before any search runs. Each succeeded entry is billed as one query.",
+        "the whole call before any search runs.",
       inputSchema: {
         query: z.string().min(1).optional()
           .describe("Query for every entry that does not set its own `query`."),
@@ -617,7 +617,7 @@ export function registerChunkTools(server: McpServer): void {
       const config = getConfig();
       const body = buildMultiQueryV3Body(params.query, params.collections);
       log(`v3 multi search over ${params.collections.length} collection(s)`);
-      const data = await captainFetch(config, "query", { version: "v3", method: "POST", body });
+      const data = await captainFetch(config, "collections/batch-query", { version: "v3", method: "POST", body });
       return formatMultiQueryResult(data, params.collections.length);
     }
   );
