@@ -51,16 +51,15 @@ test('input schema accepts 1 to 10 entries and rejects 0 or 11', () => {
   assert.equal(schema.safeParse({ query: 'q', collections: [{ collection: 'a', limit: 5, include_regions: true }] }).success, true);
 });
 
-test('description has no em dashes and names the limits, fallback and billing', () => {
+test('description has no em dashes and names the limits and fallback', () => {
   const d = tools().get(TOOL).definition.description;
   assert.doesNotMatch(d, /—/);
   assert.match(d, /1 to 10/);
   assert.match(d, /top-level/);
   assert.match(d, /not comparable/);
-  assert.match(d, /billed as one query/);
 });
 
-test('handler POSTs /v3/query and renders each slot under its index and collection', async (t) => {
+test('handler POSTs /v3/collections/batch-query and renders each slot under its index and collection', async (t) => {
   const response = {
     request_id: 'req_1',
     execution_time_ms: 42,
@@ -78,7 +77,7 @@ test('handler POSTs /v3/query and renders each slot under its index and collecti
     tools().get(TOOL).handler({ query: 'refunds', collections: [{ collection: 'policies' }, { collection: 'missing', limit: 3 }] }));
   assert.equal(seen.length, 1);
   assert.equal(seen[0].method, 'POST');
-  assert.equal(seen[0].url.pathname, '/v3/query');
+  assert.equal(seen[0].url.pathname, '/v3/collections/batch-query');
   assert.deepEqual(seen[0].body, {
     query: 'refunds',
     collections: [{ collection: 'policies', limit: 10 }, { collection: 'missing', limit: 3 }],
@@ -91,7 +90,7 @@ test('handler POSTs /v3/query and renders each slot under its index and collecti
   assert.match(text, /"query_id": "q1"/);
 });
 
-test('oauth mode routes through /mcp-app/v3/query with the environment', async (t) => {
+test('oauth mode routes through /mcp-app/v3/collections/batch-query with the environment', async (t) => {
   let seenUrl;
   t.mock.method(globalThis, 'fetch', async (url) => {
     seenUrl = new URL(String(url));
@@ -99,7 +98,7 @@ test('oauth mode routes through /mcp-app/v3/query with the environment', async (
   });
   await runWithConfig({ apiKey: 'tok', mode: 'oauth', environment: 'staging' }, () =>
     tools().get(TOOL).handler({ query: 'q', collections: [{ collection: 'a' }] }));
-  assert.equal(seenUrl.pathname, '/mcp-app/v3/query');
+  assert.equal(seenUrl.pathname, '/mcp-app/v3/collections/batch-query');
   assert.equal(seenUrl.searchParams.get('environment'), 'staging');
 });
 

@@ -60,7 +60,7 @@ Exposes 19 tools:
 - `exclude_chunk_types` — drop `page_header`, `page_footer`, `footnote` and friends so page furniture stops competing with body text.
 - `include_relations` / `include_related_chunks` / `relation_direction` / `relation_types` — hydrate graph neighbours, so an answer split across a claim and its evidence table comes back together. This is the multi-hop lever; build the edges with `captain_create_chunk_relation`.
 
-**Searching several collections (`captain_search_v3_multi`).** One call to `POST /v3/query` searches 1 to 10 collections. Each entry names a collection and takes every `captain_search_v3` parameter, so entries can be tuned separately. A top-level `query` applies to every entry that does not set its own. The response has one result per entry, in request order, and each is a separate ranked list: results are never merged and scores from different collections are not comparable. One entry can fail while the others succeed, and each succeeded entry is billed as one query.
+**Searching several collections (`captain_search_v3_multi`).** One call to `POST /v3/collections/batch-query` searches 1 to 10 collections. Each entry names a collection and takes every `captain_search_v3` parameter, so entries can be tuned separately. A top-level `query` applies to every entry that does not set its own. The response has one result per entry, in request order, and each is a separate ranked list: results are never merged and scores from different collections are not comparable. One entry can fail while the others succeed.
 
 ## Credentials
 
