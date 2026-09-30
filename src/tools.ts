@@ -440,6 +440,19 @@ export function registerCaptainTools(server: McpServer): void {
         const c = b.credits && typeof b.credits === "object" ? b.credits : {};
         const used = c.used ?? c.consumed ?? c.total ?? JSON.stringify(c);
         lines.push(`Credits: ${used} used${b.unlimited ? " (unlimited plan)" : c.remaining != null ? `, ${c.remaining} remaining of ${b.included_credits}` : ""}`);
+        // used_basic/used_advanced are page counts; the rest are credits.
+        const parts = [
+          ["used_basic", "basic pages"],
+          ["used_advanced", "advanced pages"],
+          ["used_text", "credits for text"],
+          ["used_sheet", "credits for spreadsheets"],
+          ["used_image", "credits for images"],
+          ["used_audio", "credits for audio"],
+          ["used_video", "credits for video"],
+        ]
+          .filter(([k]) => typeof c[k] === "number" && c[k] > 0)
+          .map(([k, label]) => `${c[k]} ${label}`);
+        if (parts.length) lines.push(`  By type: ${parts.join(", ")}`);
       }
       if (Array.isArray(data.youtube) && data.youtube.length) {
         lines.push("YouTube:");
