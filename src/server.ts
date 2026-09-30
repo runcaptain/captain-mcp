@@ -13,10 +13,11 @@ import { registerQueryHistoryTools } from "./queryHistoryTools.js";
 import { registerDocumentTools } from "./documentTools.js";
 import { registerJobTools } from "./jobTools.js";
 import { registerWebhookTools, WEBHOOK_TOOL_NAMES } from "./webhookTools.js";
+import { registerParseTools } from "./parseTools.js";
 
 export const VERSION = "0.9.0";
 /** Actual number of tools registered by buildServer() — verified against the registry. */
-export const TOOL_COUNT = 75;
+export const TOOL_COUNT = 80;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.
@@ -72,6 +73,7 @@ export function buildServer(): McpServer {
   registerDocumentTools(server);
   registerJobTools(server);
   registerWebhookTools(server);
+  registerParseTools(server);
   return server;
 }
 
