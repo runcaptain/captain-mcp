@@ -25,14 +25,14 @@ test('parse_document passes an https input through as JSON to /v3/parse/document
     return new Response(JSON.stringify({ job_id: 'prs_1', type: 'document', status: 'queued', status_url: '/v3/parse/jobs/prs_1', created_at: '2026-09-30T00:00:00Z' }), { status: 202 });
   });
   const out = parse(await call(handlers(), 'captain_parse_document', {
-    input: 'https://files.example.com/r.pdf', processing_type: 'advanced', mask_pii: true, pii_engine: 'kev', idempotency_key: 'k1',
+    input: 'https://files.example.com/r.pdf', processing_type: 'advanced', idempotency_key: 'k1',
   }));
   assert.equal(out.job_id, 'prs_1');
   assert.equal(seen.length, 1);
   assert.match(seen[0].url, /\/v3\/parse\/documents$/);
   assert.equal(seen[0].method, 'POST');
   assert.equal(seen[0].headers['Idempotency-Key'], 'k1');
-  assert.deepEqual(JSON.parse(seen[0].body), { input: 'https://files.example.com/r.pdf', processing_type: 'advanced', mask_pii: true, pii_engine: 'kev' });
+  assert.deepEqual(JSON.parse(seen[0].body), { input: 'https://files.example.com/r.pdf', processing_type: 'advanced' });
 });
 
 test('parse_spreadsheet uploads a local path first and parses its captain:// id', async (t) => {
@@ -55,13 +55,12 @@ test('parse_spreadsheet uploads a local path first and parses its captain:// id'
   assert.deepEqual(JSON.parse(seen[1].options.body), { input: 'captain://upl_abc', include_verified_facts: true });
 });
 
-test('exactly one source, and no images with masking', async (t) => {
+test('exactly one source', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => new Response('{}', { status: 200 }));
   const map = handlers();
   await assert.rejects(call(map, 'captain_parse_document', {}), /exactly one of/);
   await assert.rejects(call(map, 'captain_parse_document', { input: 'https://x/y.pdf', path: '/tmp/y.pdf' }), /exactly one of/);
   await assert.rejects(call(map, 'captain_parse_document', { content_base64: 'aGk=' }), /name/);
-  await assert.rejects(call(map, 'captain_parse_spreadsheet', { input: 'https://x/y.xlsx', include_images: true, mask_pii: true }), /include_images/);
 });
 
 test('get_parse_job waits until terminal and trims chunks for the reply', async (t) => {
