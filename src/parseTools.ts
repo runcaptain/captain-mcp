@@ -179,7 +179,9 @@ export function registerParseTools(server: McpServer): void {
       description:
         "Parse an XLSX, XLSM, XLS, CSV or TSV with the same parsing and chunking Captain uses for indexing and get the " +
         "final row-group chunks back (sheet name, row and column range, column headers on every chunk), without " +
-        "storing anything. Starts a job; read the chunks with captain_get_parse_job. Spreadsheets bill zero pages.",
+        "storing anything. Starts a job; read the chunks with captain_get_parse_job. Spreadsheets bill no pages but are " +
+        "charged for sheet text (0.5 credits per 3,000 characters) and each described image when include_images is on; " +
+        "failed or cancelled jobs are not billed.",
       inputSchema: {
         ...fileSourceFields,
         include_tags_summary: z.boolean().optional().describe("Add the tags and summary indexing generates to each chunk (default false)"),

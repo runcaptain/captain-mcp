@@ -50,7 +50,7 @@ Exposes 19 tools:
 
 **Parse API (5):** Parse a file with the same parsing and chunking Captain uses for indexing and get the final chunks back, without storing anything in a collection. Each parse is a job: start it, then read it.
 - `captain_parse_document` — PDF, DOCX or DOC. Billed per page at the indexing rates for `processing_type`; failed or cancelled jobs are not billed.
-- `captain_parse_spreadsheet` — XLSX, XLSM, XLS, CSV or TSV, with optional image descriptions (`include_images`) and exact per-column facts (`include_verified_facts`). Bills zero pages.
+- `captain_parse_spreadsheet` — XLSX, XLSM, XLS, CSV or TSV, with optional image descriptions (`include_images`) and exact per-column facts (`include_verified_facts`). Bills no pages; charged for sheet text and described images.
 - `captain_get_parse_job` — status and, once completed, the chunks in order plus a fresh `result_url` for the full result; `wait_seconds` polls until the job finishes.
 - `captain_cancel_parse_job` — stop a running job, or delete a finished job's result early.
 - `captain_parse_upload` — upload a local file once and parse it several times by its `captain://` id. The parse tools take `input` (an https link or a `captain://` id), `path` or `content_base64` directly, so this is optional.
