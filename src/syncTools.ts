@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, textResult, type ToolResult } from "./captainClient.js";
+import { processingTypeEnum, type ProcessingType } from "./processingType.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -8,9 +9,9 @@ const enc = encodeURIComponent;
 const json = (data: unknown): ToolResult => textResult(JSON.stringify(data, null, 2));
 
 // Shared enums used across the sync tools.
-const processingType = z
-  .enum(["advanced", "basic"])
-  .describe("Parsing tier. 'advanced' = full document understanding; 'basic' = faster/cheaper.");
+const processingType = processingTypeEnum(
+  "Parsing tier. 'advanced' = full document understanding (default); 'basic' = faster/cheaper.",
+);
 const deletionPolicy = z
   .enum(["mirror", "archive", "ignore"])
   .describe(
@@ -40,7 +41,7 @@ const commonSyncFields = {
 // Assemble the shared body fields from validated params, omitting undefined
 // values so the API applies its own defaults.
 function buildCommonBody(params: {
-  processing_type?: "advanced" | "basic";
+  processing_type?: ProcessingType;
   prefix?: string;
   include_patterns?: string[];
   exclude_patterns?: string[];

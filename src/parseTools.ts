@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, captainUploadFiles, textResult, type ToolResult, type CaptainConfig } from "./captainClient.js";
 import { validateInlineFile, INLINE_BASE64_SOFT_LIMIT_BYTES } from "./inlineFileValidation.js";
+import { processingTypeEnum } from "./processingType.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 const json = (data: unknown): ToolResult => textResult(JSON.stringify(data, null, 2));
@@ -139,8 +140,8 @@ export function registerParseTools(server: McpServer): void {
         "with captain_get_parse_job. Billed per page at the indexing rates for processing_type; failed or cancelled jobs are not billed.",
       inputSchema: {
         ...fileSourceFields,
-        processing_type: z.enum(["advanced", "basic"]).optional().describe(
-          "'advanced' extracts tables, figures and charts and bills advanced pages; 'basic' (default) bills basic pages"),
+        processing_type: processingTypeEnum(
+          "'advanced' extracts tables, figures and charts and bills advanced pages; 'basic' (default) bills basic pages.").optional(),
         include_tags_summary: z.boolean().optional().describe("Add the tags and summary indexing generates to each chunk (default false)"),
         ...idempotencyField,
       },

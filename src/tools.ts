@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, captainUploadFiles, textResult, jobStartedResponse, type ToolResult, type CaptainConfig } from "./captainClient.js";
 import { RerankOptionsSchema } from "./chunkTools.js";
 import { validateInlineFile, INLINE_BASE64_SOFT_LIMIT_BYTES } from "./inlineFileValidation.js";
+import { processingTypeEnum, type ProcessingType } from "./processingType.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
@@ -505,7 +506,7 @@ export function registerCaptainTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name to index into"),
         urls: z.union([z.string(), z.array(z.string())]).describe("URL or array of URLs to index"),
-        processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' (OCR + images) or 'basic' (text only)"),
+        processing_type: processingTypeEnum("'advanced' (OCR + images, default here) or 'basic' (text only).").optional(),
         custom_metadata: indexOptionFields.custom_metadata,
         mask_pii: indexOptionFields.mask_pii,
         pii_engine: indexOptionFields.pii_engine,
@@ -618,7 +619,7 @@ export function registerCaptainTools(server: McpServer): void {
           content_base64: z.string().describe("Base64-encoded file bytes"),
         })).optional().describe("Inline files as base64 (works on hosted servers)"),
         paths: z.union([z.string(), z.array(z.string())]).optional().describe("Local filesystem path(s) — only usable when the server runs locally"),
-        processing_type: z.enum(["advanced", "basic"]).optional().describe("'advanced' AI-enhanced extraction (default here); 'basic' standard"),
+        processing_type: processingTypeEnum("'advanced' AI-enhanced extraction (default here); 'basic' standard.").optional(),
         custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks"),
         skip_existing: z.boolean().optional().describe("Skip files already indexed (default true)"),
         overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
@@ -728,7 +729,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket (omit for full bucket)"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file, one {\"uri\": \"s3://bucket/key\"} per line plus optional source_identity (one document per identity: a repeat is skipped or, with overwrite_existing, replaced), custom_metadata, checksum, version_id, size and etag. Up to 1,000,000 lines, 500 MB total and 10 KB per line, plain UTF-8 and uncompressed; unusable lines are counted on the job, never fail it"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
@@ -791,7 +792,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file, one {\"uri\": \"gs://bucket/key\"} per line plus optional source_identity (one document per identity: a repeat is skipped or, with overwrite_existing, replaced), custom_metadata, checksum, version_id, size and etag. Up to 1,000,000 lines, 500 MB total and 10 KB per line, plain UTF-8 and uncompressed; unusable lines are counted on the job, never fail it"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
@@ -845,7 +846,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the container"),
         file_path: z.string().optional().describe("Single file path within the container"),
         manifest_path: z.string().optional().describe("Manifest mode: path within the container of a JSON Lines file, one {\"uri\": \"https://{account}.blob.core.windows.net/{container}/key\"} per line plus optional source_identity (one document per identity: a repeat is skipped or, with overwrite_existing, replaced), custom_metadata, checksum, version_id, size and etag. Up to 1,000,000 lines, 500 MB total and 10 KB per line, plain UTF-8 and uncompressed; unusable lines are counted on the job, never fail it"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
@@ -903,7 +904,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory path within the bucket"),
         file_path: z.string().optional().describe("Single file path within the bucket"),
         manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file, one {\"uri\": \"r2://bucket/key\"} per line plus optional source_identity (one document per identity: a repeat is skipped or, with overwrite_existing, replaced), custom_metadata, checksum, version_id, size and etag. Up to 1,000,000 lines, 500 MB total and 10 KB per line, plain UTF-8 and uncompressed; unusable lines are counted on the job, never fail it"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
@@ -961,7 +962,7 @@ export function registerCaptainTools(server: McpServer): void {
         dropbox_access_token: z.string().describe("Dropbox access token"),
         directory_path: z.string().optional().describe("Dropbox folder to index recursively, e.g. '/Reports/2024' (omit for whole account)"),
         file_path: z.string().optional().describe("Single Dropbox file path, e.g. '/Reports/2024/q1.pdf'"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         source_identity: z.string().min(1).max(1024).optional().describe("Single-file mode only: stable identity for the document, independent of where the object is read from. Indexing any location with the same source_identity updates the same document instead of creating another, and skip_existing matches on it. Defaults to the object's own URI"),
         ...indexOptionFields,
       },
@@ -1012,7 +1013,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
         file_path: z.string().optional().describe("Single object key within the bucket"),
         manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file, one {\"uri\": \"s3://bucket/key\"} per line plus optional source_identity (one document per identity: a repeat is skipped or, with overwrite_existing, replaced), custom_metadata, checksum, version_id, size and etag. Up to 1,000,000 lines, 500 MB total and 10 KB per line, plain UTF-8 and uncompressed; unusable lines are counted on the job, never fail it"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         ...indexOptionFields,
       },
     },
@@ -1040,7 +1041,7 @@ export function registerCaptainTools(server: McpServer): void {
         directory_path: z.string().optional().describe("Directory/prefix within the bucket"),
         file_path: z.string().optional().describe("Single object key within the bucket"),
         manifest_path: z.string().optional().describe("Manifest mode: path within the bucket of a JSON Lines file, one {\"uri\": \"s3://bucket/key\"} per line plus optional source_identity (one document per identity: a repeat is skipped or, with overwrite_existing, replaced), custom_metadata, checksum, version_id, size and etag. Up to 1,000,000 lines, 500 MB total and 10 KB per line, plain UTF-8 and uncompressed; unusable lines are counted on the job, never fail it"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         ...indexOptionFields,
       },
     },
@@ -1064,7 +1065,7 @@ export function registerCaptainTools(server: McpServer): void {
         subject_email: z.string().describe("Email of the Drive user to impersonate (domain-wide delegation)"),
         folder_id: z.string().optional().describe("Drive folder id to index recursively (omit for whole Drive)"),
         file_id: z.string().optional().describe("Single Drive file id"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         ...indexOptionFields,
       },
     },
@@ -1113,7 +1114,7 @@ export function registerCaptainTools(server: McpServer): void {
         drive_id: z.string().optional().describe("Specific document library (drive) id (default: the site's default drive)"),
         folder_id: z.string().optional().describe("Folder id to index recursively"),
         item_id: z.string().optional().describe("Single item (file) id"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         ...indexOptionFields,
       },
     },
@@ -1164,7 +1165,7 @@ export function registerCaptainTools(server: McpServer): void {
         user_email: z.string().describe("Email of the OneDrive owner to index"),
         folder_id: z.string().optional().describe("Folder id to index recursively"),
         item_id: z.string().optional().describe("Single item (file) id"),
-        processing_type: z.enum(["advanced", "basic"]).optional(),
+        processing_type: processingTypeEnum("Parsing tier: 'advanced' (default here) or 'basic'.").optional(),
         ...indexOptionFields,
       },
     },
@@ -1215,7 +1216,7 @@ async function indexS3Compatible(
     directory_path?: string;
     file_path?: string;
     manifest_path?: string;
-    processing_type?: "advanced" | "basic";
+    processing_type?: ProcessingType;
   } & IndexOptions,
 ): Promise<ToolResult> {
   const body: Record<string, unknown> = {
