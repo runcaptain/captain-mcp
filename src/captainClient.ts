@@ -115,8 +115,9 @@ export async function captainUploadFiles(
   config: CaptainConfig,
   path: string,
   form: FormData,
+  version: ApiVersion = "v2",
 ): Promise<any> {
-  const url = buildUrl(config, "v2", path);
+  const url = buildUrl(config, version, path);
   const response = await fetch(url, {
     method: "POST",
     headers: captainHeaders(config),

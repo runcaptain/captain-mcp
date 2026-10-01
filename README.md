@@ -48,10 +48,17 @@ Exposes 19 tools:
 - `captain_webhook_setup` — manage endpoints. Actions: `create` (an HTTPS URL for every indexing job in the organization, in all environments, with optional filters by event type, collection, sync and source), `list`, `get`, `update` (change filters, pause or resume), `delete`, `rotate_secret` (the old secret keeps signing for 24 hours) and `test` (send an example payload with `"test": true`). `create` and `rotate_secret` return the signing secret once; no action reads it back.
 - `captain_webhook_events` — what Captain sends and what happened to it. Actions: `event_types` (each payload's JSON Schema), `deliveries` and `attempts` (what was sent and how each attempt went: HTTP status, duration), `resend` (one event) and `recover` (every failed event since a time within the last 7 days).
 
+**Parse API (5):** Parse a file with the same parsing and chunking Captain uses for indexing and get the final chunks back, without storing anything in a collection. Each parse is a job: start it, then read it.
+- `captain_parse_document` — PDF, DOCX or DOC. Billed per page at the indexing rates for `processing_type`; failed or cancelled jobs are not billed.
+- `captain_parse_spreadsheet` — XLSX, XLSM, XLS, CSV or TSV, with optional image descriptions (`include_images`) and exact per-column facts (`include_verified_facts`). Bills no pages; charged for sheet text and described images.
+- `captain_get_parse_job` — status and, once completed, the chunks in order plus a fresh `result_url` for the full result; `wait_seconds` polls until the job finishes.
+- `captain_cancel_parse_job` — stop a running job, or delete a finished job's result early.
+- `captain_parse_upload` — upload a local file once and parse it several times by its `captain://` id. The parse tools take `input` (an https link or a `captain://` id), `path` or `content_base64` directly, so this is optional.
+
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval`, the Evaluation API and job webhooks — 75 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval`, the Evaluation API, job webhooks and the Parse API — 80 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.

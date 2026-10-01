@@ -60,7 +60,7 @@ test('no action reads a secret back', () => {
 test('TOOL_COUNT matches the registry, and the versions agree', () => {
   const server = buildServer();
   assert.equal(Object.keys(server._registeredTools ?? {}).length, TOOL_COUNT);
-  assert.equal(TOOL_COUNT, 75);
+  assert.equal(TOOL_COUNT, 80);
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(VERSION, pkg.version);
   assert.equal(VERSION, '0.9.0');
