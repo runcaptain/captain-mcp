@@ -106,13 +106,13 @@ const eventsSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("recover"), endpoint_id: endpointId, since }).strict(),
 ]);
 
-type ActionUnion = z.ZodDiscriminatedUnion<"action", z.ZodDiscriminatedUnionOption<"action">[]>;
+type ActionUnion = z.ZodDiscriminatedUnion<readonly z.ZodObject<z.ZodRawShape, z.core.$ZodObjectConfig>[], "action">;
 
 /** Arguments each action accepts, for error messages. */
 function argsByAction(schema: ActionUnion): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const option of schema.options) {
-    const shape = option.shape as Record<string, z.ZodTypeAny>;
+    const shape = option.shape;
     const action = (shape.action as z.ZodLiteral<string>).value;
     out.set(action, Object.keys(shape).filter((k) => k !== "action"));
   }
@@ -139,7 +139,9 @@ function parseAction<T>(tool: string, schema: ActionUnion, args: unknown): T {
   const problems = result.error.issues.map((issue) => {
     if (issue.code === "unrecognized_keys") return `${issue.keys.join(", ")} not used by this action`;
     const field = issue.path.join(".");
-    if (issue.code === "invalid_type" && issue.received === "undefined") return `${field} is required`;
+    // zod 4 issues no longer carry the received value, so look it up in the input.
+    const given = issue.path.reduce<unknown>((v, k) => (v as Record<PropertyKey, unknown> | undefined)?.[k], cleaned);
+    if (issue.code === "invalid_type" && given === undefined) return `${field} is required`;
     return `${field}: ${issue.message}`;
   });
   throw new Error(

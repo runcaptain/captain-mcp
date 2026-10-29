@@ -134,7 +134,7 @@ test('captain_webhook_setup: each action validates its own arguments before any 
   const seen = mockFetch(t, {});
   const cases = [
     [{ action: 'create' }, /action "create": url is required/],
-    [{ action: 'create', url: 'not a url' }, /action "create": url: Invalid url/],
+    [{ action: 'create', url: 'not a url' }, /action "create": url: Invalid url/i],
     [{ action: 'create', url: 'http://example.com/hooks' }, /url must start with https:\/\//],
     [{ action: 'create', url: 'https://x.test', endpoint_id: 'whe_1' }, /endpoint_id not used by this action/],
     [{ action: 'get' }, /action "get": endpoint_id is required\. This action takes: endpoint_id\./],
