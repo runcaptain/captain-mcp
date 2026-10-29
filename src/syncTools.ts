@@ -18,14 +18,13 @@ const deletionPolicy = z
     "How to propagate deletes: 'mirror' removes from the collection, 'archive' retains but marks, 'ignore' leaves untouched. Default 'mirror'.",
   );
 const customMetadata = z
-  .record(z.union([z.string(), z.number(), z.boolean()]))
+  .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
   .describe("Static metadata applied to every synced document.");
-const syncInterval = z
-  .number()
-  .int()
-  .describe(
-    "Scheduled reconcile cadence in minutes. MINIMUM 5 (values below 5 are raised to 5). null/omitted = manual (events + on-demand only).",
-  );
+// Described after .nullable(): zod 4 otherwise puts the description on the inner
+// branch of the JSON schema's anyOf, where clients do not show it.
+const syncInterval = z.number().int();
+const syncIntervalDescription =
+  "Scheduled reconcile cadence in minutes. MINIMUM 5 (values below 5 are raised to 5). null/omitted = manual (events + on-demand only).";
 
 // Common creation-request fields shared by every provider (the S3-compatible
 // ones and, minus `auth`, S3 itself).
@@ -35,7 +34,7 @@ const commonSyncFields = {
   exclude_patterns: z.array(z.string()).optional().describe("Glob patterns; matching keys are excluded."),
   deletion_policy: deletionPolicy.optional(),
   custom_metadata: customMetadata.optional(),
-  sync_interval_minutes: syncInterval.nullable().optional(),
+  sync_interval_minutes: syncInterval.nullable().optional().describe(syncIntervalDescription),
 };
 
 // Assemble the shared body fields from validated params, omitting undefined
@@ -116,7 +115,7 @@ export function registerSyncTools(server: McpServer): void {
         endpoint_url: z.string().optional().describe("access_key: S3-compatible endpoint URL. Omit for real AWS S3. (For R2/Supabase/Backblaze prefer their dedicated create tools.)"),
         region: z.string().optional().describe("Bucket region (default: us-east-1)"),
         processing_type: processingType.optional(),
-        metadata_mapping: z.record(z.string()).optional().describe("Maps an S3 object metadata key to a Captain metadata field name."),
+        metadata_mapping: z.record(z.string(), z.string()).optional().describe("Maps an S3 object metadata key to a Captain metadata field name."),
         ...commonSyncFields,
       },
     },
@@ -280,7 +279,7 @@ export function registerSyncTools(server: McpServer): void {
         account_key: z.string().describe("Storage account access key (key1 or key2) with read access to the container"),
         processing_type: processingType.optional(),
         metadata_mapping: z
-          .record(z.string())
+          .record(z.string(), z.string())
           .optional()
           .describe("Maps an Azure blob metadata key to a Captain metadata field name."),
         ...commonSyncFields,
@@ -314,7 +313,7 @@ export function registerSyncTools(server: McpServer): void {
         bucket: z.string().describe("GCS bucket to keep in sync"),
         service_account_json: z.string().describe("Google service-account key JSON (type 'service_account'), stringified"),
         processing_type: processingType.optional(),
-        metadata_mapping: z.record(z.string()).optional().describe("Maps a GCS object metadata key to a Captain metadata field name."),
+        metadata_mapping: z.record(z.string(), z.string()).optional().describe("Maps a GCS object metadata key to a Captain metadata field name."),
         ...commonSyncFields,
       },
     },
@@ -344,7 +343,7 @@ export function registerSyncTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Destination collection name"),
         provider: z.enum(["s3", "r2", "supabase", "backblaze", "azure", "gcs"]).describe("Storage provider"),
-        config: z.record(z.any()).describe("The provider's create body, exactly as the create tool would send it (e.g. for s3: bucket, auth {type, ...}, region; for azure: container, account_name, account_key)"),
+        config: z.record(z.string(), z.any()).describe("The provider's create body, exactly as the create tool would send it (e.g. for s3: bucket, auth {type, ...}, region; for azure: container, account_name, account_key)"),
       },
     },
     async (params): Promise<ToolResult> => {

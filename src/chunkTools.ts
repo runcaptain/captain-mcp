@@ -61,7 +61,7 @@ export const QueryV3ConfigSchema = z.object({
     .describe("Max ranked chunks to return (default 10)."),
   max_chunks_per_document: z.number().int().min(1).max(100).optional()
     .describe("Cap on chunks from any one document, for document-level diversity: `limit: 5` with `max_chunks_per_document: 1` returns the five most relevant documents, one chunk each. Default: no cap."),
-  filter: z.record(z.any()).optional()
+  filter: z.record(z.string(), z.any()).optional()
     .describe("Document-metadata filter. Top-level keys only (never nested under metadata). Bare value = $eq. Operators: $eq $ne $gt $gte $lt $lte $in $nin $and $or. Scope to documents with {\"file_id\": {\"$in\": [...]}}."),
   semantic_ratio: z.number().min(0).max(1).optional()
     .describe("Keyword vs semantic balance. 0.0 = keyword (BM25) only and fastest (skips query embedding); 1.0 = semantic only; 0.5 default weighs both. Lower for exact-term corpora (part numbers, error codes); raise when callers paraphrase."),
@@ -309,7 +309,7 @@ export function registerChunkTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name"),
         chunk_id: z.string().describe("Chunk id"),
-        custom_metadata: z.record(z.any()).describe("Full metadata object to store (replaces any existing custom metadata)"),
+        custom_metadata: z.record(z.string(), z.any()).describe("Full metadata object to store (replaces any existing custom metadata)"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -335,7 +335,7 @@ export function registerChunkTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name"),
         chunk_id: z.string().describe("Chunk id"),
-        custom_metadata: z.record(z.any()).describe("Keys to merge into the chunk's custom metadata"),
+        custom_metadata: z.record(z.string(), z.any()).describe("Keys to merge into the chunk's custom metadata"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -414,7 +414,7 @@ export function registerChunkTools(server: McpServer): void {
         target_chunk_id: z.string().describe("Target chunk id"),
         relation_type: z.string().describe("Relation type label, e.g. 'references', 'follows'"),
         target_document_id: z.string().optional().describe("Target document id (helps resolve the target chunk)"),
-        metadata: z.record(z.any()).optional().describe("Optional metadata on the relation"),
+        metadata: z.record(z.string(), z.any()).optional().describe("Optional metadata on the relation"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -457,7 +457,7 @@ export function registerChunkTools(server: McpServer): void {
             z.object({
               item_id: z.string().min(1).describe("Unique within this request; echoed on the result"),
               chunk_id: z.string().min(1).describe("Chunk id as returned by the chunk list or a query result"),
-              metadata: z.record(z.any()).describe("Custom metadata for this chunk"),
+              metadata: z.record(z.string(), z.any()).describe("Custom metadata for this chunk"),
             }),
           )
           .min(1)
@@ -502,7 +502,7 @@ export function registerChunkTools(server: McpServer): void {
               source_chunk_id: z.string().min(1).describe("Chunk id where the relation starts"),
               target_chunk_id: z.string().min(1).describe("Chunk id where the relation points; must differ from the source"),
               relation_type: z.string().min(1).max(255).describe("Relation label; part of the relation's identity"),
-              metadata: z.record(z.any()).describe("Relation metadata (required). On update it replaces the whole object"),
+              metadata: z.record(z.string(), z.any()).describe("Relation metadata (required). On update it replaces the whole object"),
               target_document_id: z.string().optional().describe("Optional; when given, the document must contain the target chunk"),
             }),
           )

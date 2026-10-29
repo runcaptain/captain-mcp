@@ -32,7 +32,7 @@ const CaseSchema = z.object({
   query: z.string().min(1).describe("The question sent as the query."),
   expected_files: z.array(z.string().min(1)).min(1).max(50)
     .describe("1-50 documents that should be retrieved: a filename, or a document id as shown in query results or the documents list. 0 or 2+ matches marks the case GOLD_UNRESOLVED (not run, not billed)."),
-  filters: z.record(z.any()).optional()
+  filters: z.record(z.string(), z.any()).optional()
     .describe("Optional metadata filter for this case, AND-ed with the configuration's filter."),
 });
 

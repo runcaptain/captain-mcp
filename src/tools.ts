@@ -42,7 +42,7 @@ const metadataValue = z.union([z.string(), z.number(), z.boolean()]);
  * applyIndexOptions so a knob added to the API lands on every tool at once.
  */
 export const indexOptionFields = {
-  custom_metadata: z.record(metadataValue).optional().describe("Custom metadata attached to every indexed document (filterable in search)"),
+  custom_metadata: z.record(z.string(), metadataValue).optional().describe("Custom metadata attached to every indexed document (filterable in search)"),
   mask_pii: z.boolean().optional().describe("Mask detected PII (emails, names, SSNs, ...) in parsed text before embedding; a PII report is retained on the job (default false)"),
   pii_engine: z.enum(["kev", "jev", "presidio", "captain-jev", "captain-presidio"]).optional().describe(
     "Masking engine. 'kev' (default): Captain's Kev classifier model, runs on Captain's infrastructure, supports pii_fields and pii_instructions, and has no fallback, so a file Kev cannot mask fails to index. " +
@@ -111,7 +111,7 @@ export function registerCaptainTools(server: McpServer): void {
         top_k: z.number().int().min(1).max(100).optional().describe("Number of results to return, 1-100 (default 10)"),
         rerank: z.union([z.boolean(), RerankOptionsSchema]).optional()
           .describe("Rerank results (default true; required for multimodal collections). Object form tunes model / candidate_limit."),
-        metadata_filter: z.record(z.any()).optional()
+        metadata_filter: z.record(z.string(), z.any()).optional()
           .describe("Document-metadata filter, same operators as captain_search_v3 `filter` ($eq $ne $gt $gte $lt $lte $in $nin $and $or)"),
         semantic_ratio: z.number().min(0).max(1).optional()
           .describe("Keyword vs semantic balance: 0 = keyword only (fastest), 1 = semantic only, 0.5 default"),
@@ -206,7 +206,7 @@ export function registerCaptainTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name (lowercase, hyphens allowed, e.g. 'my-docs')"),
         description: z.string().optional().describe("Human-readable description of the collection"),
-        metadata: z.record(z.any()).optional().describe("Collection-level metadata"),
+        metadata: z.record(z.string(), z.any()).optional().describe("Collection-level metadata"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -322,7 +322,7 @@ export function registerCaptainTools(server: McpServer): void {
         collection: z.string().describe("Collection name"),
         limit: z.number().int().min(1).max(1000).optional().describe("Max documents to return (default 100, max 1000)"),
         offset: z.number().int().min(0).optional().describe("Pagination offset (default 0)"),
-        metadata_filter: z.record(z.any()).optional()
+        metadata_filter: z.record(z.string(), z.any()).optional()
           .describe("Filter over custom_metadata, same grammar as the query filter, e.g. {\"payna_file_id\": \"abc\"} or {\"year\": {\"$gte\": 2024}}"),
         include_custom_metadata: z.boolean().optional().describe("Return each document's custom_metadata (default false)"),
       },
@@ -620,7 +620,7 @@ export function registerCaptainTools(server: McpServer): void {
         })).optional().describe("Inline files as base64 (works on hosted servers)"),
         paths: z.union([z.string(), z.array(z.string())]).optional().describe("Local filesystem path(s) — only usable when the server runs locally"),
         processing_type: processingTypeEnum("'advanced' AI-enhanced extraction (default here); 'basic' standard.").optional(),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks"),
+        custom_metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks"),
         skip_existing: z.boolean().optional().describe("Skip files already indexed (default true)"),
         overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
         transcription_language: z.string().optional().describe("AWS Transcribe language code for audio/video (e.g. 'en-US')"),

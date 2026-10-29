@@ -109,7 +109,7 @@ export function registerDocumentTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name"),
         document_id: z.string().describe("Document id"),
-        custom_metadata: z.record(z.any()).describe("The complete new custom_metadata object"),
+        custom_metadata: z.record(z.string(), z.any()).describe("The complete new custom_metadata object"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -135,7 +135,7 @@ export function registerDocumentTools(server: McpServer): void {
       inputSchema: {
         collection: z.string().describe("Collection name"),
         document_id: z.string().describe("Document id"),
-        custom_metadata: z.record(z.any()).describe("Keys to set or overwrite"),
+        custom_metadata: z.record(z.string(), z.any()).describe("Keys to set or overwrite"),
       },
     },
     async (params): Promise<ToolResult> => {
@@ -176,7 +176,7 @@ export function registerDocumentTools(server: McpServer): void {
             z.object({
               item_id: z.string().min(1).describe("Unique within this request; echoed on the result"),
               document_id: z.string().min(1).describe("Document id as returned by indexing or listing"),
-              metadata: z.record(z.any()).describe("Custom metadata for this document"),
+              metadata: z.record(z.string(), z.any()).describe("Custom metadata for this document"),
             }),
           )
           .min(1)
