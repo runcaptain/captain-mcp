@@ -17,7 +17,7 @@ import { registerParseTools } from "./parseTools.js";
 
 export const VERSION = "0.9.0";
 /** Actual number of tools registered by buildServer() — verified against the registry. */
-export const TOOL_COUNT = 80;
+export const TOOL_COUNT = 81;
 
 /**
  * Build a fully-configured MCP server with every Captain tool registered.

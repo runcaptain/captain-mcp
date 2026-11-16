@@ -58,7 +58,7 @@ Exposes 19 tools:
 **Integration wizard (1):**
 - `captain_wizard` — writes Captain into a codebase, using Captain's own agent docs (`llms.txt`) as the source of truth for the current API surface. On first use it asks the user's permission to send routine, de-identified feedback about the integration to Captain's public feedback endpoint (no key, no code, no personal data).
 
-> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval`, the Evaluation API, job webhooks and the Parse API — 80 tools total.
+> The hosted server (see below) also adds more indexing sources (Dropbox, Supabase, Backblaze, SharePoint, OneDrive, Google Drive), storage syncs, v3 search, chunk-level tools, query history, `captain_eval`, the Evaluation API, job webhooks and the Parse API — 81 tools total.
 
 **Advanced search (`captain_search_v3`).** Every retrieval lever is a request parameter, not a re-index, so they can be tuned against a question set with `captain_eval`:
 - `semantic_ratio` — blends the two retrieval legs, keyword (BM25) and semantic (dense vector). `0.0` is keyword only and fastest (it skips embedding the query), `1.0` is semantic only, `0.5` is the default. Lower it for corpora full of exact strings (part numbers, error codes); raise it when callers paraphrase.
@@ -68,6 +68,8 @@ Exposes 19 tools:
 - `include_relations` / `include_related_chunks` / `relation_direction` / `relation_types` — hydrate graph neighbours, so an answer split across a claim and its evidence table comes back together. This is the multi-hop lever; build the edges with `captain_create_chunk_relation`.
 
 **Searching several collections (`captain_search_v3_multi`).** One call to `POST /v3/collections/batch-query` searches 1 to 10 collections. Each entry names a collection and takes every `captain_search_v3` parameter, so entries can be tuned separately. A top-level `query` applies to every entry that does not set its own. The response has one result per entry, in request order, and each is a separate ranked list: results are never merged and scores from different collections are not comparable. One entry can fail while the others succeed.
+
+**Searching every collection (`captain_search_v3_all`).** One call to `POST /v3/collections/query-all` searches every active collection in the key's environment and returns one ranked list, reranked across collections, each result naming its `collection`. It takes every `captain_search_v3` parameter plus `exclude_collections`. Each call searches one window of up to 500 collections, newest first (`collection_window` sets a smaller one). When more follow, pass `scope.next_collection_cursor` back as `collection_cursor` to search the next window; it is null on the last. Scores are comparable within one window only.
 
 ## Credentials
 

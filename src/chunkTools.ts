@@ -115,6 +115,36 @@ export function buildQueryV3Body(query: string, cfg: QueryV3Config): Record<stri
   return body;
 }
 
+/** Most collections one POST /v3/collections/query-all window searches (ALL_QUERY_MAX_COLLECTIONS in the API). */
+export const ALL_QUERY_MAX_WINDOW = 500;
+
+/** The query-all fields on top of every v3 query parameter. */
+export const QueryAllConfigSchema = QueryV3ConfigSchema.extend({
+  exclude_collections: z.array(z.string().min(1)).max(ALL_QUERY_MAX_WINDOW).optional()
+    .describe("Collection names to leave out. Applies inside every window: send the same list with each collection_cursor."),
+  collection_cursor: z.string().min(1).max(512).optional()
+    .describe("Search the next window of collections: pass scope.next_collection_cursor from the previous call (same query and exclude_collections). Omit it for the first window."),
+  collection_window: z.number().int().min(1).max(ALL_QUERY_MAX_WINDOW).optional()
+    .describe("Most collections this call searches (one window). Default and maximum 500."),
+});
+export type QueryAllConfig = z.infer<typeof QueryAllConfigSchema>;
+
+/**
+ * Build the POST /v3/collections/query-all body: built exactly as
+ * captain_search_v3 builds a single query (buildQueryV3Body, so the same
+ * `limit` default and include_* flattening apply), plus the window fields.
+ * Only keys the caller supplied are sent, so `rerank` keeps the server's
+ * query-all default (on).
+ */
+export function buildQueryAllV3Body(query: string, cfg: QueryAllConfig): Record<string, unknown> {
+  const { exclude_collections, collection_cursor, collection_window, ...queryCfg } = cfg;
+  const body = buildQueryV3Body(query, queryCfg);
+  if (exclude_collections !== undefined) body.exclude_collections = exclude_collections;
+  if (collection_cursor !== undefined) body.collection_cursor = collection_cursor;
+  if (collection_window !== undefined) body.collection_window = collection_window;
+  return body;
+}
+
 /** Most collections one POST /v3/collections/batch-query request may name (MULTI_QUERY_MAX_COLLECTIONS in the API). */
 export const MULTI_QUERY_MAX_COLLECTIONS = 10;
 
@@ -619,6 +649,45 @@ export function registerChunkTools(server: McpServer): void {
       log(`v3 multi search over ${params.collections.length} collection(s)`);
       const data = await captainFetch(config, "collections/batch-query", { version: "v3", method: "POST", body });
       return formatMultiQueryResult(data, params.collections.length);
+    }
+  );
+
+  // ── captain_search_v3_all ───────────────────────────────────
+  // POST /v3/collections/query-all: every active collection of the key's
+  // environment, one window (up to 500, newest first) per call.
+  server.registerTool(
+    "captain_search_v3_all",
+    {
+      title: "Search every collection, one ranked list (v3)",
+      description:
+        "Search every active collection in the environment of the API key and get one ranked list: candidates " +
+        "from all collections are merged and reranked together (rerank is on by default here), so scores are " +
+        "comparable across collections, and each result names its `collection`. Takes every captain_search_v3 " +
+        "parameter, applied to each collection, plus `exclude_collections`. One call searches one window of up " +
+        "to 500 collections, newest first (`collection_window` sets a smaller window). When more follow, " +
+        "`scope.next_collection_cursor` is set: call again with it as `collection_cursor` (same query and " +
+        "exclude_collections) to search the next window, until it is null. Scores are comparable within one " +
+        "window only, not across windows. `collections` summarises hits and top_score per collection, and " +
+        "`scope` says what was searched (total_collections, window_start, window_collections). Billed as one query. " +
+        "RECALL WARNING: every collection gets the same shallow look (its top max(10, limit) hits from a shared " +
+        "budget of 4,000, never fewer than 10 each), so recall per collection falls as the collection count grows: " +
+        "at limit 100, more than 40 collections means fewer than 100 candidates each, and from 400 collections " +
+        "each contributes 10. A relevant passage below a collection's top 10 can be missed. Use this tool to find " +
+        "which collections hold a topic, then query those collections by name (captain_search_v3, or " +
+        "captain_search_v3_multi for up to 10) for the full-depth answer. Use exclude_collections to keep " +
+        "irrelevant collections out of the budget.",
+      inputSchema: {
+        query: z.string().describe("Natural-language search query"),
+        ...QueryAllConfigSchema.shape,
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const { query, ...cfg } = params;
+      const body = buildQueryAllV3Body(query, cfg);
+      log(`v3 search '${query}' across all collections${cfg.collection_cursor ? " (next window)" : ""}`);
+      const data = await captainFetch(config, "collections/query-all", { version: "v3", method: "POST", body });
+      return json(data);
     }
   );
 }
