@@ -1,11 +1,14 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, textResult, batchResult, type ToolResult } from "./captainClient.js";
+import { selectFields, fieldsParam } from "./responseFields.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 
 const enc = encodeURIComponent;
 const json = (data: unknown): ToolResult => textResult(JSON.stringify(data, null, 2));
+/** Kept on every item when `fields` is set, so a projected chunk can still be fetched or edited. */
+const CHUNK_IDS = ["chunk_id", "document_id"];
 
 // ── Shared v3 query schemas ──────────────────────────────────────────────
 // These mirror QueryRequestV3 in the OpenAPI spec exactly and are exported so
@@ -226,6 +229,7 @@ export function registerChunkTools(server: McpServer): void {
         cursor: z.number().int().min(0).optional().describe("Offset cursor from a prior next_cursor (default 0)"),
         include_regions: z.boolean().optional().describe("Include layout/bounding-box regions (default false)"),
         include_metadata: z.boolean().optional().describe("Include chunk metadata (default true)"),
+        fields: fieldsParam,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -241,7 +245,7 @@ export function registerChunkTools(server: McpServer): void {
         `collections/${enc(params.collection)}/chunks?${qs.toString()}`,
         { version: "v3" },
       );
-      return json(data);
+      return json(selectFields(data, "chunks", params.fields, CHUNK_IDS));
     }
   );
 
@@ -566,11 +570,12 @@ export function registerChunkTools(server: McpServer): void {
         collection: z.string().describe("Collection name"),
         query: z.string().describe("Natural-language search query"),
         ...QueryV3ConfigSchema.shape,
+        fields: fieldsParam,
       },
     },
     async (params): Promise<ToolResult> => {
       const config = getConfig();
-      const { collection, query, ...cfg } = params;
+      const { collection, query, fields, ...cfg } = params;
       const body = buildQueryV3Body(query, cfg);
       log(`v3 search '${query}' in '${collection}'`);
       const data = await captainFetch(
@@ -578,7 +583,8 @@ export function registerChunkTools(server: McpServer): void {
         `collections/${enc(params.collection)}/query`,
         { version: "v3", method: "POST", body },
       );
-      return json(data);
+      // v3 search results carry the document id as document.id, not a top-level document_id.
+      return json(selectFields(data, "results", fields, ["chunk_id", "document.id"]));
     }
   );
 

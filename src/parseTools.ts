@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, captainUploadFiles, textResult, type ToolResult, type CaptainConfig } from "./captainClient.js";
 import { validateInlineFile, INLINE_BASE64_SOFT_LIMIT_BYTES } from "./inlineFileValidation.js";
 import { processingTypeEnum } from "./processingType.js";
+import { selectFields, fieldsParam } from "./responseFields.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 const json = (data: unknown): ToolResult => textResult(JSON.stringify(data, null, 2));
@@ -196,6 +197,7 @@ export function registerParseTools(server: McpServer): void {
           `Poll until the job is completed, failed or cancelled, up to this many seconds (default 0, max ${MAX_WAIT_SECONDS})`),
         max_chunks: z.number().int().min(0).max(1000).optional().describe(
           "Return at most this many chunks in the reply (default 50); the rest stay available through result_url"),
+        fields: fieldsParam,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -207,7 +209,7 @@ export function registerParseTools(server: McpServer): void {
         await new Promise((r) => setTimeout(r, Math.min(3000, Math.max(0, deadline - Date.now()))));
         job = await captainFetch(config, path, { version: "v3" });
       }
-      return json(summarizeJob(job, params.max_chunks ?? 50));
+      return json(selectFields(summarizeJob(job, params.max_chunks ?? 50), "chunks", params.fields, ["chunk_id"]));
     },
   );
 

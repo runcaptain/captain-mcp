@@ -70,6 +70,8 @@ Exposes 19 tools:
 
 **Searching several collections (`captain_search_v3_multi`).** One call to `POST /v3/collections/batch-query` searches 1 to 10 collections. Each entry names a collection and takes every `captain_search_v3` parameter, so entries can be tuned separately. A top-level `query` applies to every entry that does not set its own. The response has one result per entry, in request order, and each is a separate ranked list: results are never merged and scores from different collections are not comparable. One entry can fail while the others succeed.
 
+**Smaller responses (`fields`).** `captain_search_v3`, `captain_get_document`, `captain_list_chunks` and `captain_get_parse_job` take an optional `fields` list that keeps only those keys on each result or chunk, e.g. `["text", "location"]`. Ids are always kept (`chunk_id`, plus `document_id`, or `document.id` in search results), and the rest of the response (`total_results`, `next_cursor`, `timing`, ...) is unchanged. The reply adds `fields_applied`, naming the keys removed (`omitted`) and the requested keys no item has (`missing`). On the API reference examples this cuts a `captain_get_document` reply by 46%.
+
 ## Credentials
 
 Set these env vars in your shell (every client reads them the same way):

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getConfig, captainFetch, textResult, batchResult, type ToolResult } from "./captainClient.js";
+import { selectFields, fieldsParam } from "./responseFields.js";
 
 const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 const enc = encodeURIComponent;
@@ -27,6 +28,7 @@ export function registerDocumentTools(server: McpServer): void {
         document_id: z.string().describe("Document id (from captain_list_documents, a search result, or a job's files list)"),
         include_regions: z.boolean().optional().describe("Include layout regions / bounding boxes per chunk (default false)"),
         include_metadata: z.boolean().optional().describe("Include chunk metadata (default true)"),
+        fields: fieldsParam,
       },
     },
     async (params): Promise<ToolResult> => {
@@ -41,7 +43,7 @@ export function registerDocumentTools(server: McpServer): void {
         `collections/${enc(params.collection)}/documents/${enc(params.document_id)}${suffix}`,
         { version: "v3" },
       );
-      return json(data);
+      return json(selectFields(data, "chunks", params.fields, ["chunk_id", "document_id"]));
     },
   );
 
