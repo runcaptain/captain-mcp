@@ -137,12 +137,12 @@ export function rankResults(
       if (chunkId && wantChunks.has(chunkId)) key = `c:${chunkId}`;
     } else {
       // A document has two ids. `document.id` is the stable one; the id of the
-      // indexed version is `document.file_id`, and it is also the prefix of
+      // indexed version is `document.version_id`, and it is also the prefix of
       // chunk_id (`file_id:index`). Until 2026-11 the API returned the version
       // id as `document.id`, so a question set built from earlier responses
       // holds version ids. Match ground truth against every form, or a correct
       // hit on such a set reads as a miss.
-      const fileId = String(r.document?.file_id ?? r.file_id ?? "");
+      const fileId = String(r.document?.version_id ?? r.version_id ?? "");
       const prefix = chunkId.includes(":") ? chunkId.slice(0, chunkId.lastIndexOf(":")) : "";
       const hit = [docId, fileId, prefix].find((id) => id && wantDocs.has(id));
       // Credit the document once, under one name, whichever form matched.

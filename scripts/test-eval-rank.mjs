@@ -1,15 +1,15 @@
 // Document-level matching accepts every id a document is known by: the stable
-// document.id, the indexed version's document.file_id, and the chunk_id prefix.
+// document.id, the indexed version's document.version_id, and the chunk_id prefix.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { rankResults } from "../dist/evalTools.js";
 
 const STABLE = "doc-stable", VERSION = "file-version-2";
-// A result as the API returns it since stable ids: id is stable, file_id is the version.
-const shaped = { chunk_id: `${VERSION}:3`, document: { id: STABLE, file_id: VERSION } };
+// A result as the API returns it since stable ids: id is stable, version_id is the version.
+const shaped = { chunk_id: `${VERSION}:3`, document: { id: STABLE, version_id: VERSION } };
 // A result as the API returned it before: the version id sat in document.id.
 const legacy = { chunk_id: `${VERSION}:3`, document: { id: VERSION } };
-const other = { chunk_id: "x:0", document: { id: "other", file_id: "x" } };
+const other = { chunk_id: "x:0", document: { id: "other", version_id: "x" } };
 const gt = (ids) => ({ chunkIds: [], documentIds: ids });
 
 test("a question set holding version ids still matches a stable-id response", () => {
