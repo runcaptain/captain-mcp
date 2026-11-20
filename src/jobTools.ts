@@ -12,7 +12,7 @@ const JOB_STATUS_TIMEOUT_MS = 30_000;
 
 /** One compact line per job for captain_jobs_status. */
 function jobStatusLine(jobId: string, d: any): string {
-  const p = d.progress && typeof d.progress === "object" ? d.progress : {};
+  const p = d.progress ?? {};
   let line = `- ${jobId} [${d.status ?? "?"}]`;
   if (d.collection_name) line += ` → ${d.collection_name}`;
   if (p.files_total != null) {
@@ -20,7 +20,8 @@ function jobStatusLine(jobId: string, d: any): string {
     if (p.files_failed) line += ` (${p.files_failed} failed)`;
   }
   if (p.current_stage && !FINAL_STATUSES.has(d.status)) line += `, stage ${p.current_stage}`;
-  if (d.error_code || d.error_message) line += ` — ${[d.error_code, d.error_message].filter(Boolean).join(": ")}`;
+  const err = [d.error_code, d.error_message].filter(Boolean).join(": ");
+  if (err) line += ` — ${err}`;
   return line;
 }
 
@@ -106,15 +107,18 @@ export function registerJobTools(server: McpServer): void {
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(JOBS_STATUS_CONCURRENCY, ids.length) }, worker));
+      await Promise.all(Array.from({ length: JOBS_STATUS_CONCURRENCY }, worker));
 
       const counts: Record<string, number> = {};
       const notFinal: string[] = [];
       const lines = ids.map((id, i) => {
         const r = results[i];
-        const status = r.error !== undefined ? "error" : String(r.data?.status ?? "unknown");
+        if (r.error !== undefined) {
+          counts.error = (counts.error ?? 0) + 1;
+          return `- ${id} [error] ${r.error}`;
+        }
+        const status = String(r.data.status ?? "unknown");
         counts[status] = (counts[status] ?? 0) + 1;
-        if (r.error !== undefined) return `- ${id} [error] ${r.error}`;
         if (!FINAL_STATUSES.has(status)) notFinal.push(id);
         return jobStatusLine(id, r.data);
       });

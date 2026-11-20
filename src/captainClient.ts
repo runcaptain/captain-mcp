@@ -75,7 +75,7 @@ function captainHeaders(config: CaptainConfig, extra: Record<string, string> = {
 }
 
 // Without a limit, one stuck API response holds the tool call open forever.
-// The signal also covers reading the body. A call can pass its own timeoutMs.
+// The signal also covers reading the body.
 const DEFAULT_TIMEOUT_MS = Number(process.env.CAPTAIN_REQUEST_TIMEOUT_MS) || 120_000;
 
 export async function captainFetch(
