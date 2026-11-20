@@ -116,7 +116,7 @@ type QuestionOutcome = {
 };
 
 /** Rank (1-based) of the first result matching ground truth, plus every matching rank. */
-function rankResults(
+export function rankResults(
   results: any[],
   gt: { chunkIds: string[]; documentIds: string[] },
   matchLevel: "document" | "chunk",
@@ -136,12 +136,17 @@ function rankResults(
     if (matchLevel === "chunk") {
       if (chunkId && wantChunks.has(chunkId)) key = `c:${chunkId}`;
     } else {
-      if (docId && wantDocs.has(docId)) key = `d:${docId}`;
-      // Fall back to the chunk's own document prefix (chunk_id is document_id:index)
-      else if (!docId && chunkId.includes(":")) {
-        const prefix = chunkId.slice(0, chunkId.lastIndexOf(":"));
-        if (wantDocs.has(prefix)) key = `d:${prefix}`;
-      }
+      // A document has two ids. `document.id` is the stable one; the id of the
+      // indexed version is `document.file_id`, and it is also the prefix of
+      // chunk_id (`file_id:index`). Until 2026-11 the API returned the version
+      // id as `document.id`, so a question set built from earlier responses
+      // holds version ids. Match ground truth against every form, or a correct
+      // hit on such a set reads as a miss.
+      const fileId = String(r.document?.file_id ?? r.file_id ?? "");
+      const prefix = chunkId.includes(":") ? chunkId.slice(0, chunkId.lastIndexOf(":")) : "";
+      const hit = [docId, fileId, prefix].find((id) => id && wantDocs.has(id));
+      // Credit the document once, under one name, whichever form matched.
+      if (hit) key = `d:${docId || fileId || prefix}`;
     }
     if (key && !seen.has(key)) {
       seen.add(key);
