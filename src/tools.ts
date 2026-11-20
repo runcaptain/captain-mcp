@@ -394,7 +394,8 @@ export function registerCaptainTools(server: McpServer): void {
         "Status 'processing' means video or audio files are still embedding after the pipeline finished; " +
         "check again in a few minutes (it becomes final within about 30 minutes). The status is the same on every " +
         "files page. The files list can be absent when per-file detail is temporarily unavailable; the status and " +
-        "counts are still returned. To be notified instead of polling, create an endpoint with captain_webhook_setup.",
+        "counts are still returned. To check many jobs in one call, use captain_jobs_status. " +
+        "To be notified instead of polling, create an endpoint with captain_webhook_setup.",
       inputSchema: {
         job_id: z.string().describe("Job ID returned by an indexing tool"),
         files_limit: z.number().int().min(1).max(500).optional().describe("Per-file entries to return (default 50, max 500)"),

@@ -6,6 +6,25 @@ const log = (msg: string) => process.stderr.write(`[captain-mcp] ${msg}\n`);
 const enc = encodeURIComponent;
 const json = (data: unknown): ToolResult => textResult(JSON.stringify(data, null, 2));
 
+const FINAL_STATUSES = new Set(["completed", "completed_with_errors", "failed", "cancelled", "timed_out", "rolled_back"]);
+const JOBS_STATUS_CONCURRENCY = 5;
+const JOB_STATUS_TIMEOUT_MS = 30_000;
+
+/** One compact line per job for captain_jobs_status. */
+function jobStatusLine(jobId: string, d: any): string {
+  const p = d.progress ?? {};
+  let line = `- ${jobId} [${d.status ?? "?"}]`;
+  if (d.collection_name) line += ` → ${d.collection_name}`;
+  if (p.files_total != null) {
+    line += ` ${p.files_processed ?? 0}/${p.files_total} files`;
+    if (p.files_failed) line += ` (${p.files_failed} failed)`;
+  }
+  if (p.current_stage && !FINAL_STATUSES.has(d.status)) line += `, stage ${p.current_stage}`;
+  const err = [d.error_code, d.error_message].filter(Boolean).join(": ");
+  if (err) line += ` — ${err}`;
+  return line;
+}
+
 /**
  * Job-level tools beyond status/cancel: discover jobs, undo a finished one,
  * read or delete a PII masking report, and validate a parsing script before
@@ -19,7 +38,8 @@ export function registerJobTools(server: McpServer): void {
       title: "List indexing jobs",
       description:
         "List the organization's indexing jobs, newest first, with status, collection, file counts and errors. " +
-        "Use it to find jobs started in another session or by a sync backfill, then captain_job_status for detail.",
+        "Use it to find jobs started in another session or by a sync backfill, then captain_job_status for detail " +
+        "or captain_jobs_status to check many jobs in one call.",
       inputSchema: {
         status: z
           .enum(["running", "pending", "processing", "completed", "completed_with_errors", "failed", "cancelled", "timed_out"])
@@ -53,6 +73,61 @@ export function registerJobTools(server: McpServer): void {
       const total = data.total_count ?? jobs.length;
       const shown = `${(data.offset ?? 0) + 1}-${(data.offset ?? 0) + jobs.length} of ${total}`;
       return textResult(`Jobs ${shown}:\n${lines.join("\n")}`);
+    },
+  );
+
+  // ── captain_jobs_status ─────────────────────────────────────
+  server.registerTool(
+    "captain_jobs_status",
+    {
+      title: "Check many indexing jobs at once",
+      description:
+        "Check the status of up to 100 indexing jobs in one call: one line per job (status, collection, file counts, " +
+        "stage, error) and a count per status. Use it instead of one captain_job_status call per job when you watch " +
+        "many jobs. The output lists the jobs that are not final yet, so the next call can check only those. " +
+        "A job that cannot be read (not found, or no response in 30 seconds) shows [error] with the reason; the " +
+        "other jobs are still returned. For per-file results, credits or the PII report of one job, use captain_job_status.",
+      inputSchema: {
+        job_ids: z.array(z.string().min(1)).min(1).max(100).describe("Job IDs returned by indexing tools (max 100)"),
+      },
+    },
+    async (params): Promise<ToolResult> => {
+      const config = getConfig();
+      const ids = [...new Set(params.job_ids)];
+      const results: Array<{ data?: any; error?: string }> = new Array(ids.length);
+      let next = 0;
+      const worker = async () => {
+        while (next < ids.length) {
+          const i = next++;
+          try {
+            // files_limit=1: the per-file list is not shown here, so keep each response small.
+            results[i] = { data: await captainFetch(config, `jobs/${enc(ids[i])}?files_limit=1`, { timeoutMs: JOB_STATUS_TIMEOUT_MS }) };
+          } catch (err) {
+            results[i] = { error: (err as Error)?.message ?? String(err) };
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: JOBS_STATUS_CONCURRENCY }, worker));
+
+      const counts: Record<string, number> = {};
+      const notFinal: string[] = [];
+      const lines = ids.map((id, i) => {
+        const r = results[i];
+        if (r.error !== undefined) {
+          counts.error = (counts.error ?? 0) + 1;
+          return `- ${id} [error] ${r.error}`;
+        }
+        const status = String(r.data.status ?? "unknown");
+        counts[status] = (counts[status] ?? 0) + 1;
+        if (!FINAL_STATUSES.has(status)) notFinal.push(id);
+        return jobStatusLine(id, r.data);
+      });
+      const tally = Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(", ");
+      const out = [`${ids.length} jobs: ${tally}`];
+      out.push(notFinal.length ? `Not final yet (${notFinal.length}): ${notFinal.join(", ")}` : "All readable jobs are final.");
+      if (counts.error) out.push(`Could not read ${counts.error} job(s); see [error] lines.`);
+      out.push("", ...lines);
+      return textResult(out.join("\n"));
     },
   );
 

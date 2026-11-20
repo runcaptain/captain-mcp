@@ -74,27 +74,41 @@ function captainHeaders(config: CaptainConfig, extra: Record<string, string> = {
   return headers;
 }
 
+// Without a limit, one stuck API response holds the tool call open forever.
+// The signal also covers reading the body.
+const DEFAULT_TIMEOUT_MS = Number(process.env.CAPTAIN_REQUEST_TIMEOUT_MS) || 120_000;
+
 export async function captainFetch(
   config: CaptainConfig,
   path: string,
-  options: { method?: string; body?: unknown; version?: ApiVersion; headers?: Record<string, string> } = {}
+  options: { method?: string; body?: unknown; version?: ApiVersion; headers?: Record<string, string>; timeoutMs?: number } = {}
 ): Promise<any> {
   const version = options.version || "v2";
+  const method = options.method || "GET";
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const url = buildUrl(config, version, path);
-  const response = await fetch(url, {
-    method: options.method || "GET",
-    headers: captainHeaders(config, { "Content-Type": "application/json", ...(options.headers ?? {}) }),
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: captainHeaders(config, { "Content-Type": "application/json", ...(options.headers ?? {}) }),
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-  if (!response.ok) {
-    const error = await response.text().catch(() => response.statusText);
-    throw new Error(`Captain API error (${response.status}): ${error}`);
+    if (!response.ok) {
+      const error = await response.text().catch(() => response.statusText);
+      throw new Error(`Captain API error (${response.status}): ${error}`);
+    }
+
+    // 204 / empty-body responses (some DELETEs) have nothing to parse.
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
+  } catch (err) {
+    if ((err as Error)?.name === "TimeoutError") {
+      throw new Error(`Captain API request timed out after ${timeoutMs / 1000}s: ${method} /${version}/${path.split("?")[0]}`);
+    }
+    throw err;
   }
-
-  // 204 / empty-body responses (some DELETEs) have nothing to parse.
-  const text = await response.text();
-  return text ? JSON.parse(text) : {};
 }
 
 /**
