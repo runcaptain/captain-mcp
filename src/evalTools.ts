@@ -212,6 +212,21 @@ export function unifyExpectedCounts(
   return several;
 }
 
+/**
+ * Whether any of the questions in `ids` expects more than one answer. The
+ * winner is chosen on the questions every configuration answered, so the
+ * weights for that choice must come from those questions alone: a multi-hop
+ * question that failed in one round is not being compared, and must not put
+ * nDCG into the comparison's score.
+ */
+export function expectsSeveralAmong(
+  rounds: Array<Array<Pick<QuestionOutcome, "id" | "relevantCount">>>,
+  ids: string[],
+): boolean {
+  const wanted = new Set(ids);
+  return rounds.some((outcomes) => outcomes.some((o) => wanted.has(o.id) && o.relevantCount > 1));
+}
+
 const recallAt = (outcomes: QuestionOutcome[], k: number): number =>
   outcomes.length === 0
     ? 0
@@ -666,12 +681,15 @@ export function registerEvalTools(server: McpServer): void {
         );
       }
 
+      // One flag for the comparison, from the questions being compared.
+      const commonMultiHop =
+        multiHop && expectsSeveralAmong(rounds.map((r) => r.outcomes), common);
       const commonScores = degraded
         ? []
         : rounds.map((r) => {
             const subset = r.outcomes.filter((o) => common.includes(o.id));
             const m = metricsFor(subset);
-            return { name: r.name, config: r.config, ...composite(m, multiHopNow), clean: r.failed.length === 0 };
+            return { name: r.name, config: r.config, ...composite(m, commonMultiHop), clean: r.failed.length === 0 };
           });
 
       const baseline = rounds[0];

@@ -2,7 +2,7 @@
 // document.id, the indexed version's document.version_id, and the chunk_id prefix.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expectedCount, ndcgAt, rankResults as rankFull, unifyExpectedCounts } from "../dist/evalTools.js";
+import { expectedCount, ndcgAt, rankResults as rankFull, unifyExpectedCounts, expectsSeveralAmong } from "../dist/evalTools.js";
 
 // Most cases assert rank and matchedRanks only.
 const rankResults = (...args) => {
@@ -78,4 +78,12 @@ test("every configuration is scored with the same answer count per question", ()
   // A question with two real answers keeps the comparison multi-hop for both.
   const c = [{ id: "q2", listedCount: 2, aliases: 0, relevantCount: 2 }];
   assert.equal(unifyExpectedCounts([a, c]), true);
+});
+
+test("a multi-hop question outside the compared set does not make the comparison multi-hop", () => {
+  // q2 expects two answers but failed in the candidate round, so only q1 is compared.
+  const baseline = [{ id: "q1", relevantCount: 1 }, { id: "q2", relevantCount: 2 }];
+  const candidate = [{ id: "q1", relevantCount: 1 }];
+  assert.equal(expectsSeveralAmong([baseline, candidate], ["q1"]), false);
+  assert.equal(expectsSeveralAmong([baseline, candidate], ["q1", "q2"]), true);
 });
