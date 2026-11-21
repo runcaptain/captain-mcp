@@ -2,7 +2,7 @@
 // document.id, the indexed version's document.version_id, and the chunk_id prefix.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expectedCount, ndcgAt, rankResults as rankFull } from "../dist/evalTools.js";
+import { expectedCount, ndcgAt, rankResults as rankFull, unifyExpectedCounts } from "../dist/evalTools.js";
 
 // Most cases assert rank and matchedRanks only.
 const rankResults = (...args) => {
@@ -66,4 +66,16 @@ test("two different documents are still two expected answers", () => {
   assert.equal(aliases, 0);
   assert.equal(expectedCount([STABLE, "other"], aliases), 2);
   assert.equal(ndcgAt([{ matchedRanks, relevantCount: 2 }], 10), 1);
+});
+
+test("every configuration is scored with the same answer count per question", () => {
+  // Configuration A missed q1, so it never saw that q1's two ids are one document.
+  const a = [{ id: "q1", listedCount: 2, aliases: 0, relevantCount: 2 }];
+  const b = [{ id: "q1", listedCount: 2, aliases: 1, relevantCount: 1 }];
+  assert.equal(unifyExpectedCounts([a, b]), false);
+  assert.equal(a[0].relevantCount, 1);
+  assert.equal(b[0].relevantCount, 1);
+  // A question with two real answers keeps the comparison multi-hop for both.
+  const c = [{ id: "q2", listedCount: 2, aliases: 0, relevantCount: 2 }];
+  assert.equal(unifyExpectedCounts([a, c]), true);
 });
