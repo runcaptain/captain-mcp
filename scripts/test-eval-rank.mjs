@@ -2,7 +2,13 @@
 // document.id, the indexed version's document.version_id, and the chunk_id prefix.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rankResults } from "../dist/evalTools.js";
+import { expectedCount, ndcgAt, rankResults as rankFull } from "../dist/evalTools.js";
+
+// Most cases assert rank and matchedRanks only.
+const rankResults = (...args) => {
+  const { rank, matchedRanks } = rankFull(...args);
+  return { rank, matchedRanks };
+};
 
 const STABLE = "doc-stable", VERSION = "file-version-2";
 // A result as the API returns it since stable ids: id is stable, version_id is the version.
@@ -40,4 +46,24 @@ test("an unrelated document is a miss", () => {
 test("a spreadsheet chunk id (file:parent:index) matches its file's version id", () => {
   const sheet = { chunk_id: `${VERSION}:2:7` };
   assert.deepEqual(rankResults([sheet], gt([VERSION]), "document"), { rank: 1, matchedRanks: [1] });
+});
+
+test("a stable-id response with no version_id matches version-id ground truth through the chunk id", () => {
+  const noVersion = { chunk_id: `${VERSION}:3`, document: { id: STABLE } };
+  assert.deepEqual(rankResults([noVersion], gt([VERSION]), "document"), { rank: 1, matchedRanks: [1] });
+});
+
+test("both ids of one document are one expected answer, so a perfect hit scores 1", () => {
+  const { matchedRanks, aliases } = rankFull([shaped], gt([STABLE, VERSION]), "document");
+  assert.equal(aliases, 1);
+  const relevantCount = expectedCount([STABLE, VERSION], aliases);
+  assert.equal(relevantCount, 1);
+  assert.equal(ndcgAt([{ matchedRanks, relevantCount }], 10), 1);
+});
+
+test("two different documents are still two expected answers", () => {
+  const { matchedRanks, aliases } = rankFull([shaped, other], gt([STABLE, "other"]), "document");
+  assert.equal(aliases, 0);
+  assert.equal(expectedCount([STABLE, "other"], aliases), 2);
+  assert.equal(ndcgAt([{ matchedRanks, relevantCount: 2 }], 10), 1);
 });

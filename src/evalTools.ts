@@ -120,7 +120,7 @@ export function rankResults(
   results: any[],
   gt: { chunkIds: string[]; documentIds: string[] },
   matchLevel: "document" | "chunk",
-): { rank: number | null; matchedRanks: number[] } {
+): { rank: number | null; matchedRanks: number[]; aliases: number } {
   const wantChunks = new Set(usableIds(gt.chunkIds));
   const wantDocs = new Set(usableIds(gt.documentIds));
   const matchedRanks: number[] = [];
@@ -128,6 +128,10 @@ export function rankResults(
   // rank so recall stays comparable across configs that return different chunk
   // densities. `seen` tracks which relevant item each rank is credited to.
   const seen = new Set<string>();
+  // Ground-truth ids seen on each credited document. A question set can list
+  // both ids of one document (stable and version); the extra one is a second
+  // name, not a second expected answer.
+  const named = new Map<string, Set<string>>();
   for (let i = 0; i < results.length; i++) {
     const r = results[i] ?? {};
     const chunkId = String(r.chunk_id ?? "");
@@ -152,15 +156,35 @@ export function rankResults(
         : chunkId.includes(":") ? chunkId.slice(0, chunkId.lastIndexOf(":")) : "";
       const hit = [docId, fileId, prefix].find((id) => id && wantDocs.has(id));
       // Credit the document once, under one name, whichever form matched.
-      if (hit) key = `d:${docId || fileId || prefix}`;
+      if (hit) {
+        key = `d:${docId || fileId || prefix}`;
+        const ids = named.get(key) ?? new Set<string>();
+        for (const id of [docId, fileId, prefix]) if (id && wantDocs.has(id)) ids.add(id);
+        named.set(key, ids);
+      }
     }
     if (key && !seen.has(key)) {
       seen.add(key);
       matchedRanks.push(i + 1);
     }
   }
-  return { rank: matchedRanks.length ? Math.min(...matchedRanks) : null, matchedRanks };
+  let aliases = 0;
+  for (const ids of named.values()) aliases += ids.size - 1;
+  return { rank: matchedRanks.length ? Math.min(...matchedRanks) : null, matchedRanks, aliases };
 }
+
+/**
+ * How many distinct answers a question expects. `aliases` is the number of
+ * ground-truth ids that turned out to be a second name of a document already
+ * counted (rankResults). Without this a perfect answer to a question listing
+ * both ids of one document scores nDCG 0.61, not 1.
+ */
+export function expectedCount(groundTruthIds: string[], aliases: number): number {
+  return Math.max(1, usableIds(groundTruthIds).length - aliases);
+}
+
+/** A round is multi-hop only if some question still expects more than one answer once aliases are folded. */
+const expectsSeveral = (outcomes: QuestionOutcome[]): boolean => outcomes.some((o) => o.relevantCount > 1);
 
 const recallAt = (outcomes: QuestionOutcome[], k: number): number =>
   outcomes.length === 0
@@ -177,7 +201,10 @@ const mrr = (outcomes: QuestionOutcome[]): number =>
  * one relevant item — with a single relevant item it collapses to a monotone
  * function of rank and carries the same information as MRR.
  */
-function ndcgAt(outcomes: QuestionOutcome[], k: number): number {
+export function ndcgAt(
+  outcomes: Array<Pick<QuestionOutcome, "matchedRanks" | "relevantCount">>,
+  k: number,
+): number {
   if (outcomes.length === 0) return 0;
   let total = 0;
   for (const o of outcomes) {
@@ -375,11 +402,12 @@ async function runConfig(
         });
         const latencyMs = Date.now() - started;
         const results = Array.isArray(data?.results) ? data.results : [];
-        const { rank, matchedRanks } = rankResults(results, q.groundTruth, matchLevel);
-        const relevantCount = usableIds(
+        const { rank, matchedRanks, aliases } = rankResults(results, q.groundTruth, matchLevel);
+        const relevantCount = expectedCount(
           matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds,
-        ).length;
-        outcomes.push({ id: q.id, rank, matchedRanks, relevantCount: Math.max(1, relevantCount), latencyMs });
+          aliases,
+        );
+        outcomes.push({ id: q.id, rank, matchedRanks, relevantCount, latencyMs });
       } catch (e: any) {
         // A query that fails (timeout, 5xx) is EXCLUDED, never scored as a miss:
         // scoring it as a miss makes a flaky round look worse than it is, and
@@ -562,7 +590,7 @@ export function registerEvalTools(server: McpServer): void {
         // Early stop only on a CLEAN round: a candidate that dropped a hard
         // question to a query failure would otherwise look artificially good.
         const m = metricsFor(outcomes);
-        const { score } = composite(m, multiHop);
+        const { score } = composite(m, multiHop && expectsSeveral(outcomes));
         if (failed.length === 0 && score >= earlyStop) {
           log(`eval early stop at '${candidate.name}' (${score} >= ${earlyStop})`);
           break;
@@ -572,7 +600,7 @@ export function registerEvalTools(server: McpServer): void {
       // Per-round report over that round's own surviving questions.
       const results = rounds.map((r) => {
         const m = metricsFor(r.outcomes);
-        const { score, grade, weakest } = composite(m, multiHop);
+        const { score, grade, weakest } = composite(m, multiHop && expectsSeveral(r.outcomes));
         const hitCount = r.outcomes.filter((o) => o.rank !== null && o.rank <= 10).length;
         return {
           name: r.name,
@@ -609,7 +637,7 @@ export function registerEvalTools(server: McpServer): void {
         : rounds.map((r) => {
             const subset = r.outcomes.filter((o) => common.includes(o.id));
             const m = metricsFor(subset);
-            return { name: r.name, config: r.config, ...composite(m, multiHop), clean: r.failed.length === 0 };
+            return { name: r.name, config: r.config, ...composite(m, multiHop && expectsSeveral(subset)), clean: r.failed.length === 0 };
           });
 
       const baseline = rounds[0];
