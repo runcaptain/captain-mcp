@@ -143,7 +143,13 @@ export function rankResults(
       // holds version ids. Match ground truth against every form, or a correct
       // hit on such a set reads as a miss.
       const fileId = String(r.document?.version_id ?? r.version_id ?? "");
-      const prefix = chunkId.includes(":") ? chunkId.slice(0, chunkId.lastIndexOf(":")) : "";
+      // chunk_id is `file:index`, or `file:parent:index` for a chunk above
+      // parent 0 (spreadsheets). File ids never contain ":", so the file id is
+      // the first part; cutting at the last ":" would give `file:parent`.
+      const parsed = /^([^:]+):\d+(?::\d+)?$/.exec(chunkId);
+      const prefix = parsed
+        ? parsed[1]
+        : chunkId.includes(":") ? chunkId.slice(0, chunkId.lastIndexOf(":")) : "";
       const hit = [docId, fileId, prefix].find((id) => id && wantDocs.has(id));
       // Credit the document once, under one name, whichever form matched.
       if (hit) key = `d:${docId || fileId || prefix}`;

@@ -36,3 +36,8 @@ test("a result with no document block falls back to the chunk_id prefix", () => 
 test("an unrelated document is a miss", () => {
   assert.deepEqual(rankResults([other], gt([STABLE, VERSION]), "document"), { rank: null, matchedRanks: [] });
 });
+
+test("a spreadsheet chunk id (file:parent:index) matches its file's version id", () => {
+  const sheet = { chunk_id: `${VERSION}:2:7` };
+  assert.deepEqual(rankResults([sheet], gt([VERSION]), "document"), { rank: 1, matchedRanks: [1] });
+});
