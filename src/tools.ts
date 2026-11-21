@@ -36,6 +36,41 @@ function mimeForPath(path: string): string {
 
 const metadataValue = z.union([z.string(), z.number(), z.boolean()]);
 
+// Metadata per file for captain_index_file (POST /v2/collections/{c}/index/file,
+// form field `file_metadata`). One entry per uploaded file, paired by POSITION:
+// two files may share a filename, so a filename cannot be the key. The upload
+// order is the order this tool appends files in: `files`, then `urls`, then
+// `paths`.
+export const fileMetadataField = z
+  .array(z.record(z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])).nullable())
+  .optional()
+  .describe(
+    "Metadata per file: one entry per uploaded file, in upload order (`files` first, then `urls`, then `paths`). " +
+    "Each file is indexed with custom_metadata plus its own entry; the entry wins on a shared key. " +
+    "Use {} or null for a file that needs nothing of its own. Must have exactly one entry per file. " +
+    "Keep a key's value type the same across files: a key can be filtered on with one type only."
+  );
+
+// The multipart value for `file_metadata`, or undefined when the caller sent
+// none. A list that does not have one entry per file is refused here, with
+// the counts, rather than uploading the files first: the API refuses it too,
+// and it never guesses which file an entry belongs to.
+export function fileMetadataFormValue(
+  fileMetadata: Array<Record<string, unknown> | null> | undefined,
+  fileCount: number,
+): string | undefined {
+  if (fileMetadata === undefined) return undefined;
+  if (fileMetadata.length !== fileCount) {
+    throw new Error(
+      `file_metadata has ${fileMetadata.length} ${fileMetadata.length === 1 ? "entry" : "entries"} ` +
+      `but ${fileCount} ${fileCount === 1 ? "file is" : "files are"} being uploaded. ` +
+      "Send exactly one entry per file, in upload order (`files`, then `urls`, then `paths`); " +
+      "use {} or null for a file that needs no metadata of its own.",
+    );
+  }
+  return JSON.stringify(fileMetadata);
+}
+
 /**
  * Request fields every bulk index endpoint shares (IndexS3Request and
  * friends). Spread into a tool's inputSchema and forwarded with
@@ -698,7 +733,8 @@ export function registerCaptainTools(server: McpServer): void {
         })).optional().describe("Inline files as base64 (works on hosted servers)"),
         paths: z.union([z.string(), z.array(z.string())]).optional().describe("Local filesystem path(s) — only usable when the server runs locally"),
         processing_type: processingTypeEnum("'advanced' AI-enhanced extraction (default here); 'basic' standard.").optional(),
-        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks"),
+        custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks. Applies to every file in the call; use file_metadata to give each file its own"),
+        file_metadata: fileMetadataField,
         skip_existing: z.boolean().optional().describe("Skip files already indexed (default true)"),
         overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
         transcription_language: z.string().optional().describe("AWS Transcribe language code for audio/video (e.g. 'en-US')"),
@@ -767,6 +803,8 @@ export function registerCaptainTools(server: McpServer): void {
 
       form.append("processing_type", params.processing_type || "advanced");
       if (params.custom_metadata) form.append("custom_metadata", JSON.stringify(params.custom_metadata));
+      const fileMetadata = fileMetadataFormValue(params.file_metadata, count);
+      if (fileMetadata !== undefined) form.append("file_metadata", fileMetadata);
       if (params.skip_existing !== undefined) form.append("skip_existing", String(params.skip_existing));
       if (params.overwrite_existing !== undefined) form.append("overwrite_existing", String(params.overwrite_existing));
       if (params.transcription_language) form.append("transcription_language", params.transcription_language);

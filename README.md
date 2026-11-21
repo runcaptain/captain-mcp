@@ -19,7 +19,7 @@ Exposes 19 tools:
 - `captain_index_s3` (assume-role or access key), `captain_index_gcs`, `captain_index_azure`, `captain_index_r2` (jurisdiction incl. `us`)
 - Every index tool accepts `custom_metadata`, `mask_pii`, `max_files`, `skip_existing`, `overwrite_existing`, `transcription_language`, and `parsing_script` where the endpoint does
 
-`captain_index_file` uploads local paths (PDF, DOCX, XLSX, CSV, TXT, images, …) via multipart/form-data — max 20 files, 100MB each.
+`captain_index_file` uploads local paths (PDF, DOCX, XLSX, CSV, TXT, images, …) via multipart/form-data — max 20 files, 100MB each. `file_metadata` gives each file its own metadata in the same call: one entry per file, in upload order (`files`, then `urls`, then `paths`), merged over `custom_metadata`.
 
 **Live search (2):**
 - `captain_save` — save a short note (decision, gotcha, bug repro, design constraint) to a per-project collection with a timestamped, slugified filename. Auto-creates the collection on first use.
