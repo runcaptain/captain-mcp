@@ -112,15 +112,19 @@ type QuestionOutcome = {
   /** All 1-based ranks that matched (used for nDCG on multi-hop questions). */
   matchedRanks: number[];
   relevantCount: number;
+  /** Usable ground-truth ids listed for the question, before aliases are folded. */
+  listedCount: number;
+  /** Listed ids this configuration saw to be a second name of a credited document. */
+  aliases: number;
   latencyMs: number;
 };
 
 /** Rank (1-based) of the first result matching ground truth, plus every matching rank. */
-function rankResults(
+export function rankResults(
   results: any[],
   gt: { chunkIds: string[]; documentIds: string[] },
   matchLevel: "document" | "chunk",
-): { rank: number | null; matchedRanks: number[] } {
+): { rank: number | null; matchedRanks: number[]; aliases: number } {
   const wantChunks = new Set(usableIds(gt.chunkIds));
   const wantDocs = new Set(usableIds(gt.documentIds));
   const matchedRanks: number[] = [];
@@ -128,6 +132,10 @@ function rankResults(
   // rank so recall stays comparable across configs that return different chunk
   // densities. `seen` tracks which relevant item each rank is credited to.
   const seen = new Set<string>();
+  // Ground-truth ids seen on each credited document. A question set can list
+  // both ids of one document (stable and version); the extra one is a second
+  // name, not a second expected answer.
+  const named = new Map<string, Set<string>>();
   for (let i = 0; i < results.length; i++) {
     const r = results[i] ?? {};
     const chunkId = String(r.chunk_id ?? "");
@@ -136,11 +144,27 @@ function rankResults(
     if (matchLevel === "chunk") {
       if (chunkId && wantChunks.has(chunkId)) key = `c:${chunkId}`;
     } else {
-      if (docId && wantDocs.has(docId)) key = `d:${docId}`;
-      // Fall back to the chunk's own document prefix (chunk_id is document_id:index)
-      else if (!docId && chunkId.includes(":")) {
-        const prefix = chunkId.slice(0, chunkId.lastIndexOf(":"));
-        if (wantDocs.has(prefix)) key = `d:${prefix}`;
+      // A document has two ids. `document.id` is the stable one; the id of the
+      // indexed version is `document.version_id`, and it is also the prefix of
+      // chunk_id (`file_id:index`). Until 2026-11 the API returned the version
+      // id as `document.id`, so a question set built from earlier responses
+      // holds version ids. Match ground truth against every form, or a correct
+      // hit on such a set reads as a miss.
+      const fileId = String(r.document?.version_id ?? r.version_id ?? "");
+      // chunk_id is `file:index`, or `file:parent:index` for a chunk above
+      // parent 0 (spreadsheets). File ids never contain ":", so the file id is
+      // the first part; cutting at the last ":" would give `file:parent`.
+      const parsed = /^([^:]+):\d+(?::\d+)?$/.exec(chunkId);
+      const prefix = parsed
+        ? parsed[1]
+        : chunkId.includes(":") ? chunkId.slice(0, chunkId.lastIndexOf(":")) : "";
+      const hit = [docId, fileId, prefix].find((id) => id && wantDocs.has(id));
+      // Credit the document once, under one name, whichever form matched.
+      if (hit) {
+        key = `d:${docId || fileId || prefix}`;
+        const ids = named.get(key) ?? new Set<string>();
+        for (const id of [docId, fileId, prefix]) if (id && wantDocs.has(id)) ids.add(id);
+        named.set(key, ids);
       }
     }
     if (key && !seen.has(key)) {
@@ -148,7 +172,59 @@ function rankResults(
       matchedRanks.push(i + 1);
     }
   }
-  return { rank: matchedRanks.length ? Math.min(...matchedRanks) : null, matchedRanks };
+  let aliases = 0;
+  for (const ids of named.values()) aliases += ids.size - 1;
+  return { rank: matchedRanks.length ? Math.min(...matchedRanks) : null, matchedRanks, aliases };
+}
+
+/**
+ * How many distinct answers a question expects. `aliases` is the number of
+ * ground-truth ids that turned out to be a second name of a document already
+ * counted (rankResults). Without this a perfect answer to a question listing
+ * both ids of one document scores nDCG 0.61, not 1.
+ */
+export function expectedCount(groundTruthIds: string[], aliases: number): number {
+  return Math.max(1, usableIds(groundTruthIds).length - aliases);
+}
+
+/**
+ * Give every configuration the same answer count per question, and say
+ * whether the comparison is multi-hop.
+ *
+ * A configuration learns that two listed ids name one document only when it
+ * returns that document. Left per-configuration, one that missed an answer
+ * would keep counting two and be scored with nDCG in its composite while
+ * another dropped it: different weights on the same questions. So the most
+ * aliases any configuration saw for a question apply to all of them.
+ */
+export function unifyExpectedCounts(
+  rounds: Array<Array<Pick<QuestionOutcome, "id" | "listedCount" | "aliases"> & { relevantCount: number }>>,
+): boolean {
+  const aliases = new Map<string, number>();
+  for (const outcomes of rounds)
+    for (const o of outcomes) aliases.set(o.id, Math.max(aliases.get(o.id) ?? 0, o.aliases));
+  let several = false;
+  for (const outcomes of rounds)
+    for (const o of outcomes) {
+      o.relevantCount = Math.max(1, o.listedCount - (aliases.get(o.id) ?? 0));
+      if (o.relevantCount > 1) several = true;
+    }
+  return several;
+}
+
+/**
+ * Whether any of the questions in `ids` expects more than one answer. The
+ * winner is chosen on the questions every configuration answered, so the
+ * weights for that choice must come from those questions alone: a multi-hop
+ * question that failed in one round is not being compared, and must not put
+ * nDCG into the comparison's score.
+ */
+export function expectsSeveralAmong(
+  rounds: Array<Array<Pick<QuestionOutcome, "id" | "relevantCount">>>,
+  ids: string[],
+): boolean {
+  const wanted = new Set(ids);
+  return rounds.some((outcomes) => outcomes.some((o) => wanted.has(o.id) && o.relevantCount > 1));
 }
 
 const recallAt = (outcomes: QuestionOutcome[], k: number): number =>
@@ -166,7 +242,10 @@ const mrr = (outcomes: QuestionOutcome[]): number =>
  * one relevant item — with a single relevant item it collapses to a monotone
  * function of rank and carries the same information as MRR.
  */
-function ndcgAt(outcomes: QuestionOutcome[], k: number): number {
+export function ndcgAt(
+  outcomes: Array<Pick<QuestionOutcome, "matchedRanks" | "relevantCount">>,
+  k: number,
+): number {
   if (outcomes.length === 0) return 0;
   let total = 0;
   for (const o of outcomes) {
@@ -364,11 +443,10 @@ async function runConfig(
         });
         const latencyMs = Date.now() - started;
         const results = Array.isArray(data?.results) ? data.results : [];
-        const { rank, matchedRanks } = rankResults(results, q.groundTruth, matchLevel);
-        const relevantCount = usableIds(
-          matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds,
-        ).length;
-        outcomes.push({ id: q.id, rank, matchedRanks, relevantCount: Math.max(1, relevantCount), latencyMs });
+        const { rank, matchedRanks, aliases } = rankResults(results, q.groundTruth, matchLevel);
+        const gtIds = matchLevel === "chunk" ? q.groundTruth.chunkIds : q.groundTruth.documentIds;
+        const relevantCount = expectedCount(gtIds, aliases);
+        outcomes.push({ id: q.id, rank, matchedRanks, relevantCount, listedCount: usableIds(gtIds).length, aliases, latencyMs });
       } catch (e: any) {
         // A query that fails (timeout, 5xx) is EXCLUDED, never scored as a miss:
         // scoring it as a miss makes a flaky round look worse than it is, and
@@ -512,6 +590,7 @@ export function registerEvalTools(server: McpServer): void {
         failed: Array<{ id: string; error: string }>;
       };
       const rounds: Round[] = [];
+      let multiHopNow = multiHop;
 
       for (const candidate of ladder) {
         const cfg: QueryV3Config = { limit, ...candidate.config };
@@ -550,18 +629,27 @@ export function registerEvalTools(server: McpServer): void {
 
         // Early stop only on a CLEAN round: a candidate that dropped a hard
         // question to a query failure would otherwise look artificially good.
+        // One answer count per question across every round so far, so the
+        // rounds are scored with the same weights.
+        multiHopNow = multiHop && unifyExpectedCounts(rounds.map((r) => r.outcomes));
         const m = metricsFor(outcomes);
-        const { score } = composite(m, multiHop);
+        const { score } = composite(m, multiHopNow);
         if (failed.length === 0 && score >= earlyStop) {
           log(`eval early stop at '${candidate.name}' (${score} >= ${earlyStop})`);
           break;
         }
       }
 
+      if (multiHop && !multiHopNow) {
+        warnings.push(
+          "Every question listing more than one id named a single document under two ids, so the set is scored as single-hop: nDCG@10 is reported but excluded from the composite.",
+        );
+      }
+
       // Per-round report over that round's own surviving questions.
       const results = rounds.map((r) => {
         const m = metricsFor(r.outcomes);
-        const { score, grade, weakest } = composite(m, multiHop);
+        const { score, grade, weakest } = composite(m, multiHopNow);
         const hitCount = r.outcomes.filter((o) => o.rank !== null && o.rank <= 10).length;
         return {
           name: r.name,
@@ -593,12 +681,15 @@ export function registerEvalTools(server: McpServer): void {
         );
       }
 
+      // One flag for the comparison, from the questions being compared.
+      const commonMultiHop =
+        multiHop && expectsSeveralAmong(rounds.map((r) => r.outcomes), common);
       const commonScores = degraded
         ? []
         : rounds.map((r) => {
             const subset = r.outcomes.filter((o) => common.includes(o.id));
             const m = metricsFor(subset);
-            return { name: r.name, config: r.config, ...composite(m, multiHop), clean: r.failed.length === 0 };
+            return { name: r.name, config: r.config, ...composite(m, commonMultiHop), clean: r.failed.length === 0 };
           });
 
       const baseline = rounds[0];
@@ -643,7 +734,7 @@ export function registerEvalTools(server: McpServer): void {
         collection: params.collection,
         question_count: questions.length,
         match_level: matchLevel,
-        multi_hop: multiHop,
+        multi_hop: multiHopNow,
         limit,
         results,
         comparison: {
