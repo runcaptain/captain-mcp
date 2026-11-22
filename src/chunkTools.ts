@@ -81,7 +81,7 @@ export const QueryV3ConfigSchema = z.object({
   include_relations: z.boolean().optional().describe("Include graph relations on each chunk (default false)."),
   include_related_chunks: z.boolean().optional().describe("Include the linked chunks for returned relations (default false). The lever for multi-hop: evidence travels with the claim."),
   include_neighboring_chunks: z.boolean().optional().describe("Include the chunk before and after each result in its source file (default false)."),
-  include_document_metadata: z.boolean().optional().describe("Include document-level metadata (default false)."),
+  include_document_metadata: z.boolean().optional().describe("Fill document.custom_metadata on each result with the document's stored custom metadata (default true). Set false for a smaller response."),
   include_archived: z.boolean().optional().describe("Surface chunks archived by a sync `archive` deletion policy (default false)."),
 });
 export type QueryV3Config = z.infer<typeof QueryV3ConfigSchema>;
