@@ -71,6 +71,44 @@ export function fileMetadataFormValue(
   return JSON.stringify(fileMetadata);
 }
 
+// Which document each uploaded file replaces, for captain_index_file (form
+// field `replace_document_ids`). One entry per uploaded file, paired by
+// POSITION like file_metadata: several documents in a collection can share a
+// filename, so a filename cannot say which one. The upload order is the order
+// this tool appends files in: `files`, then `urls`, then `paths`.
+export const replaceDocumentIdsField = z
+  .array(z.string().min(1).nullable())
+  .optional()
+  .describe(
+    "Which document each file replaces: one entry per uploaded file, in upload order (`files` first, then `urls`, " +
+    "then `paths`), the document_id to replace or null. Needs skip_existing=false. Use it when several documents " +
+    "in the collection share a filename: replacing by filename is then refused with a 409 that lists their " +
+    "document_ids. The document must have been uploaded with this tool's endpoint into this collection and have " +
+    "the file's filename; it keeps its document_id and gets a new version_id. Must have exactly one entry per file."
+  );
+
+// The multipart value for `replace_document_ids`, or undefined when the caller
+// sent none or named no document. A list that does not have one entry per
+// file is refused here, with the counts, before anything is uploaded. Every
+// other refusal (an unknown id, another filename, several documents with one
+// name) is the API's, and its message reaches the caller unchanged.
+export function replaceDocumentIdsFormValue(
+  replaceDocumentIds: Array<string | null> | undefined,
+  fileCount: number,
+): string | undefined {
+  if (replaceDocumentIds === undefined) return undefined;
+  if (replaceDocumentIds.length !== fileCount) {
+    throw new Error(
+      `replace_document_ids has ${replaceDocumentIds.length} ${replaceDocumentIds.length === 1 ? "entry" : "entries"} ` +
+      `but ${fileCount} ${fileCount === 1 ? "file is" : "files are"} being uploaded. ` +
+      "Send exactly one entry per file, in upload order (`files`, then `urls`, then `paths`); " +
+      "use null for a file that does not replace a document.",
+    );
+  }
+  if (replaceDocumentIds.every((id) => id === null)) return undefined;
+  return JSON.stringify(replaceDocumentIds);
+}
+
 /**
  * Request fields every bulk index endpoint shares (IndexS3Request and
  * friends). Spread into a tool's inputSchema and forwarded with
@@ -735,7 +773,8 @@ export function registerCaptainTools(server: McpServer): void {
         processing_type: processingTypeEnum("'advanced' AI-enhanced extraction (default here); 'basic' standard.").optional(),
         custom_metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional().describe("Custom metadata attached to all chunks. Applies to every file in the call; use file_metadata to give each file its own"),
         file_metadata: fileMetadataField,
-        skip_existing: z.boolean().optional().describe("Skip files already indexed (default true)"),
+        replace_document_ids: replaceDocumentIdsField,
+        skip_existing: z.boolean().optional().describe("Default true: a file is skipped when a document with the same filename and the same content exists; same filename with different content is added as a new document. false: the file replaces the document that has its filename (same document_id, new version_id); if several share the filename the call is refused with a 409, and replace_document_ids says which one"),
         overwrite_existing: z.boolean().optional().describe("Re-index and replace existing files (default false)"),
         transcription_language: z.string().optional().describe("AWS Transcribe language code for audio/video (e.g. 'en-US')"),
         mask_pii: indexOptionFields.mask_pii,
@@ -805,6 +844,8 @@ export function registerCaptainTools(server: McpServer): void {
       if (params.custom_metadata) form.append("custom_metadata", JSON.stringify(params.custom_metadata));
       const fileMetadata = fileMetadataFormValue(params.file_metadata, count);
       if (fileMetadata !== undefined) form.append("file_metadata", fileMetadata);
+      const replaceDocumentIds = replaceDocumentIdsFormValue(params.replace_document_ids, count);
+      if (replaceDocumentIds !== undefined) form.append("replace_document_ids", replaceDocumentIds);
       if (params.skip_existing !== undefined) form.append("skip_existing", String(params.skip_existing));
       if (params.overwrite_existing !== undefined) form.append("overwrite_existing", String(params.overwrite_existing));
       if (params.transcription_language) form.append("transcription_language", params.transcription_language);
