@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test scripts/test-query-timing.mjs scripts/test-eval-api-tools.mjs scripts/test-inline-file-validation.mjs scripts/test-eval-rank.mjs scripts/test-webhook-tools.mjs scripts/test-pii-options.mjs scripts/test-multi-query.mjs scripts/test-job-status-credits.mjs scripts/test-parse-tools.mjs scripts/test-processing-type.mjs scripts/test-confluence-tool.mjs scripts/test-social-tools.mjs scripts/test-file-metadata.mjs",
+    "test": "npm run build && node --test scripts/test-query-timing.mjs scripts/test-eval-api-tools.mjs scripts/test-inline-file-validation.mjs scripts/test-eval-rank.mjs scripts/test-webhook-tools.mjs scripts/test-pii-options.mjs scripts/test-multi-query.mjs scripts/test-job-status-credits.mjs scripts/test-parse-tools.mjs scripts/test-processing-type.mjs scripts/test-confluence-tool.mjs scripts/test-social-tools.mjs scripts/test-file-metadata.mjs scripts/test-replace-document-ids.mjs",
     "start": "node dist/server.js",
     "start:http": "node dist/httpServer.js",
     "dev": "tsc --watch",
